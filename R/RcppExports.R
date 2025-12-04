@@ -2,12 +2,7 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 #' Encode Haplotypes (Optimized)
-#'
-#' Maps unique rows of a genotype matrix to integers without string conversion.
-#'
-#' @param mat A numeric matrix of genotypes (0, 1, 2).
-#' @return Integer vector of haplotype IDs.
-#' @export
+NULL
 
 encode_block_fast <- function(mat) {
     .Call(`_HaploGeno_encode_block_fast`, mat)
@@ -16,3 +11,4 @@ encode_block_fast <- function(mat) {
 ridge_solver_cpp <- function(X, y, lambda) {
     .Call(`_HaploGeno_ridge_solver_cpp`, X, y, lambda)
 }
+
