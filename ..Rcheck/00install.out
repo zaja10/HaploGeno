@@ -1,0 +1,25 @@
+✅ Build environment configured: Using Makevars.local
+* installing *source* package ‘HaploGeno’ ...
+** this is package ‘HaploGeno’ version ‘0.3.0’
+** using staged installation
+** libs
+using C++ compiler: ‘Apple clang version 17.0.0 (clang-1700.0.13.5)’
+using SDK: ‘MacOSX15.5.sdk’
+make: Nothing to be done for `all'.
+installing to /Users/zaldiss/Library/Mobile Documents/com~apple~CloudDocs/Antigravity/Elrond/HaploGeno/..Rcheck/00LOCK-HaploGeno/00new/HaploGeno/libs
+** R
+** inst
+** byte-compile and prepare package for lazy loading
+✅ Build environment configured: Using Makevars.local
+** help
+*** installing help indices
+** building package indices
+✅ Build environment configured: Using Makevars.local
+** installing vignettes
+** testing if installed package can be loaded from temporary location
+✅ Build environment configured: Using Makevars.local
+** checking absolute paths in shared objects and dynamic libraries
+** testing if installed package can be loaded from final location
+✅ Build environment configured: Using Makevars.local
+** testing if installed package keeps a record of temporary installation path
+* DONE (HaploGeno)

@@ -1,0 +1,178 @@
+---
+title: "Comprehensive Workflow with HaploGeno"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Comprehensive Workflow with HaploGeno}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(HaploGeno)
+library(bigstatsr)
+library(future)
+```
+
+# Introduction
+
+Genomic prediction has become a cornerstone of modern breeding programs and complex trait analysis. While single-marker models (e.g., GBLUP, BayesB) are widely used, they often fail to capture local epistatic interactions and phase information inherent in haplotypes. Haplotype-based approaches offer a theoretical advantage by modeling these complex inheritance patterns directly.
+
+However, the practical application of haplotype models is often limited by computational constraints. Constructing haplotypes for high-density marker panels and fitting kernel-based models on large populations can be computationally prohibitive.
+
+**HaploGeno** addresses these challenges by providing a high-performance, memory-efficient framework. By leveraging file-backed matrices (`bigstatsr`) and optimized C++ algorithms, it enables researchers to:
+
+1.  **Construct Haplotypes Efficiently**: Using LD-based or fixed-window approaches.
+2.  **Scale to Large Datasets**: Analyzing thousands of individuals and markers on standard hardware.
+3.  **Integrate Prediction and Discovery**: Seamlessly moving from global genomic prediction (KRR) to local QTL discovery (local GEBV).
+
+This vignette demonstrates a complete workflow using simulated data.
+
+# 1. Simulating Data
+
+We simulate a dataset with 200 individuals and 2,000 markers. We introduce some missing data to demonstrate imputation.
+
+```{r data_sim}
+set.seed(123)
+n <- 200
+m <- 2000
+
+# Generate random genotypes (0, 1, 2)
+X <- matrix(sample(0:2, n * m, replace = TRUE), nrow = n, ncol = m)
+
+# Introduce 1% missing data
+na_indices <- sample(length(X), length(X) * 0.01)
+X[na_indices] <- NA
+
+# Create a dummy marker map
+map <- data.frame(
+  chr = rep(1, m),
+  id = paste0("snp", 1:m),
+  pos = 1:m,
+  ref = "A",
+  alt = "G"
+)
+
+# Simulate a phenotype with effects in the first 100 markers
+eff <- rnorm(100)
+y <- as.vector(X[, 1:100] %*% eff + rnorm(n))
+# Handle NAs in phenotype simulation (simple fix for demo)
+y[is.na(y)] <- rnorm(sum(is.na(y)))
+```
+
+# 2. Initialization and Loading
+
+Initialize the `HaploObject` and load data. `HaploGeno` supports importing from matrices, PLINK (`.bed`), and VCF files.
+
+```{r init}
+# Initialize
+haplo <- HaploObject$new(tempfile())
+
+# Import genotypes (matrix)
+# For PLINK: haplo$import_genotypes("path/to/file.bed")
+# For VCF:   haplo$import_genotypes("path/to/file.vcf")
+haplo$import_genotypes(X)
+
+# Load map and phenotypes
+haplo$load_map(map)
+haplo$load_pheno(y)
+
+print(haplo)
+```
+
+# 3. Pre-processing
+
+Filter out monomorphic markers (zero variance) and impute missing data.
+
+```{r preprocessing}
+# Filter monomorphic markers
+haplo$filter_monomorphic()
+
+# Impute missing genotypes
+haplo$impute_genotypes(method = "mean")
+```
+
+# 4. Defining Haplotype Blocks
+
+Define blocks based on Linkage Disequilibrium (LD). We use a sliding window approach with parallel processing support (via `bigstatsr` backend).
+
+```{r blocking}
+# Define blocks with r2 threshold of 0.1
+haplo$define_blocks_ld(r2_threshold = 0.1, window_size = 100)
+
+print(haplo)
+```
+
+# 5. Encoding Haplotypes
+
+Encode genotypes into haplotype alleles. This step supports parallel processing.
+
+```{r encoding}
+# Use 2 cores for parallel execution
+haplo$encode_haplotypes(n_cores = 2)
+```
+
+# 6. Computing HRM
+
+Compute the Haplotype Relationship Matrix (HRM).
+
+```{r hrm}
+haplo$compute_hrm(n_cores = 2)
+```
+
+# 7. Model Training (KRR)
+
+We use Kernel Ridge Regression (KRR). We can automatically tune the regularization parameter $\lambda$ using cross-validation.
+
+```{r cv}
+# Run 5-fold Cross-Validation
+cv_results <- haplo$cross_validate(k = 5, n_cores = 2)
+
+best_lambda <- cv_results$best_lambda
+message("Best lambda: ", best_lambda)
+```
+
+Fit the final model using the best $\lambda$. For large datasets, `HaploGeno` automatically uses a Conjugate Gradient (CG) solver.
+
+```{r fitting}
+alpha <- haplo$fit_krr(lambda = best_lambda)
+```
+
+# 8. Local GEBV and Visualization
+
+Calculate Local Genomic Estimated Breeding Values (GEBVs) to identify significant genomic regions.
+
+```{r local_gebv}
+# Estimate marker effects (required for local GEBV)
+haplo$estimate_marker_effects(lambda = best_lambda)
+
+# Calculate local GEBVs
+haplo$calculate_local_gebv(n_cores = 2)
+
+# Perform significance testing (simple variance test)
+haplo$test_significance()
+```
+
+Visualize the results with a Manhattan plot.
+
+```{r plotting, fig.width=7, fig.height=5}
+haplo$plot_manhattan(threshold = 0.05)
+```
+
+# 9. Saving the Project
+
+Save the analysis project for later use. This bundles the R object and ensures the file-backed matrix is handled correctly.
+
+```{r saving}
+haplo$save_project(file.path(tempdir(), "haplo_project.rds"))
+```
+
+# Conclusion
+
+`HaploGeno` provides a streamlined, high-performance pipeline for haplotype-based analysis, scaling from small test datasets to large genomic studies.

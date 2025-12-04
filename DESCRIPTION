@@ -1,0 +1,33 @@
+Package: HaploGeno
+Title: Haplotype-Based Genomic Prediction
+Version: 0.3.0
+Authors@R: person("Zachary", "Aldiss", email = "zaldiss@illinois.edu", role = c("aut", "cre"))
+Author: Zachary Aldiss [aut, cre]
+Maintainer: Zachary Aldiss <zaldiss@illinois.edu>
+Description: Implements a high-performance framework for haplotype-based genomic prediction and QTL discovery. 
+    Leverages file-backed matrices via 'bigstatsr' to handle large-scale genomic datasets efficiently. 
+    Key features include LD-based haplotype block construction, kernel ridge regression (KRR) for genomic prediction, 
+    and local genomic estimated breeding value (GEBV) analysis for identifying significant genomic regions.
+License: MIT
+Encoding: UTF-8
+LazyData: true
+Imports:
+    R6,
+    bigstatsr,
+    data.table,
+    Rcpp,
+    methods,
+    future,
+    future.apply,
+    bigsnpr,
+    progressr,
+    ggplot2
+Suggests:
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+LinkingTo: 
+    Rcpp,
+    RcppArmadillo
+RoxygenNote: 7.3.3

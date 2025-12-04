@@ -1,0 +1,6 @@
+HaploObject             HaploObject Class
+encode_block_fast       Encode Haplotypes (Optimized)
+load_demo_data          Load Demo Dataset
+load_haplo_project      Load HaploGeno Project
+print.HaploObject       Print method for HaploObject
+summary.HaploObject     Summary method for HaploObject

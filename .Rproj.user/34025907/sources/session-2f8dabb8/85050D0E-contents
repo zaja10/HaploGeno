@@ -1,0 +1,78 @@
+library(HaploGeno)
+library(bigstatsr)
+
+# --- 1. Simulate Data ---
+set.seed(123)
+n <- 200    # Individuals
+m <- 2000   # Markers
+
+# Generate random genotypes (0, 1, 2)
+X <- matrix(sample(0:2, n * m, replace = TRUE), nrow = n, ncol = m)
+
+# Introduce 1% missing data to test imputation
+X[sample(length(X), length(X) * 0.01)] <- NA
+
+# Create a dummy marker map
+map <- data.frame(
+  chr = rep(1, m),
+  id = paste0("snp", 1:m),
+  pos = 1:m,
+  ref = "A", alt = "G"
+)
+
+# Simulate phenotype (effects in first 100 markers)
+eff <- rnorm(100)
+y <- as.vector(X[, 1:100] %*% eff + rnorm(n))
+y[is.na(y)] <- 0 # Simple fix for demo
+
+# --- 2. Initialize & Load ---
+# Create the file-backed object in a temporary file
+haplo <- HaploObject$new(tempfile())
+
+message("Importing data...")
+haplo$import_genotypes(X)
+haplo$load_map(map)
+haplo$load_pheno(y)
+
+# --- 3. Run Pipeline ---
+message("Imputing missing data...")
+haplo$impute_genotypes(method = "mean")
+
+message("Defining haplotype blocks...")
+haplo$define_blocks_ld(r2_threshold = 0.4, window_size = 100)
+
+message("Encoding haplotypes and computing HRM...")
+haplo$encode_haplotypes(n_cores = 2)
+haplo$compute_hrm(n_cores = 2)
+
+# --- 4. Prediction (KRR) ---
+message("Running Cross-Validation...")
+cv_results <- haplo$cross_validate(k = 5, n_cores = 2)
+best_lambda <- cv_results$best_lambda
+message("Best Lambda found: ", best_lambda)
+
+message("Fitting final model...")
+alpha <- haplo$fit_krr(lambda = best_lambda)
+
+# --- 5. Visualization ---
+message("Plotting Manhattan plot...")
+haplo$estimate_marker_effects(lambda = best_lambda)
+haplo$calculate_local_gebv(n_cores = 2)
+haplo$test_significance()
+haplo$plot_manhattan(threshold = 0.05)
+
+
+haplo$plot_pca()
+
+haplo$plot_gebv_image()
+
+
+# 1. Identify the top 20 most significant blocks
+top_haplos <- haplo$identify_superior_haplotypes(top_n = 20)
+
+# 2. Score individuals based on how many of these superior haplotypes they possess
+scores <- haplo$score_stacking(top_haplos)
+
+# 3. Plot the trend
+message("Plotting Stacking Trend...")
+haplo$plot_stacking_trend(scores, top_haplos)
