@@ -1,0 +1,123 @@
+---
+title: "Advanced Analysis & Visualization with HaploGeno"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Advanced Analysis & Visualization with HaploGeno}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+    collapse = TRUE,
+    comment = "#>"
+)
+```
+
+```{r setup}
+library(HaploGeno)
+```
+
+# Introduction
+
+While the introductory vignette covers the basic workflow of simulating and fitting models, **HaploGeno** offers a suite of advanced visualization and post-analysis tools designed to help breeders and geneticists interpret their results.
+
+This vignette demonstrates how to:
+
+1.  **Visualize Population Structure** using the Haplotype Relationship Matrix (HRM).
+2.  **Interpret Local Signals** using Manhattan plots and GEBV heatmaps.
+3.  **Perform Haplotype Stacking**, a technique to identify and select individuals accumulating favorable haplotype blocks.
+
+We will use the package's built-in demo dataset, which comes pre-processed with defined blocks and calculated Local Genomic Estimated Breeding Values (GEBVs).
+
+# 1. Loading the Demo Data
+
+For quick exploration and testing, `HaploGeno` provides a pre-loaded dataset containing 50 individuals and 500 markers. The data was generated with a simulated signal in the first 50 markers.
+
+```{r load_demo}
+# Load the pre-processed demo dataset
+haplo <- load_demo_data()
+
+# Print the object summary to verify data status
+print(haplo)
+```
+
+You will notice that the **Status** summary indicates that Genotypes, Maps, Blocks, Haplotypes, and the Model are already loaded or trained.
+
+# 2. Visualizing Population Structure (PCA)
+
+Before diving into marker effects, it is crucial to understand the genetic structure of your population. `HaploGeno` can perform Principal Component Analysis (PCA) directly on the computed Haplotype Relationship Matrix (HRM).
+
+```{r pca, fig.width=6, fig.height=6}
+# Plot the first two principal components of the HRM
+haplo$plot_pca()
+```
+
+This plot helps identify clusters or stratification within the population. If you have group labels (e.g., family or origin), you can pass them to the `groups` argument to color the points accordingly.
+
+# 3. Visualizing Genomic Signals
+
+## Manhattan Plot of Local GEBVs
+
+To identify genomic regions significantly associated with the phenotype, we use a Manhattan plot based on the variance of Local GEBVs. Since our demo data has simulated effects in the first 50 markers, we expect to see significant signals at the beginning of the chromosome.
+
+```{r manhattan, fig.width=7, fig.height=5}
+# Plot significance of local GEBV variances
+# The threshold defaults to p < 0.05
+haplo$plot_manhattan(threshold = 0.05)
+```
+
+The alternating colors (black/grey) indicate different chromosomes (or blocks mapping to them), and the red dashed line indicates the significance threshold.
+
+## Local GEBV Heatmap
+
+For a more granular view, the GEBV heatmap visualizes the estimated genetic value of every block for every individual. This allows you to see if specific individuals carry high-value haplotypes in specific regions.
+
+```{r heatmap, fig.width=7, fig.height=6}
+# Visualize the Local GEBV matrix
+# X-axis: Block Index
+# Y-axis: Individual Index
+# Color: Blue (Low Value) to Red (High Value)
+haplo$plot_gebv_image()
+```
+
+# 4. Haplotype Stacking Analysis
+
+"Haplotype Stacking" is a powerful breeding strategy where the goal is to combine ("stack") superior haplotype blocks from different parents into a single individual. `HaploGeno` automates the identification of these superior blocks.
+
+## Identifying Superior Haplotypes
+
+First, we identify the specific haplotype alleles within significant blocks that have the highest positive effect on the phenotype.
+
+```{r superior}
+# Identify the best haplotype for the top 10 most significant blocks
+superior_haplos <- haplo$identify_superior_haplotypes(top_n = 10)
+
+# View the results
+print(head(superior_haplos))
+```
+
+The output table lists the `BlockID`, the `BestHaploID` (the specific allele code), and its `EffectSize`.
+
+## Scoring Individuals
+
+Next, we score each individual based on how many of these superior haplotypes they possess. This "Stacking Score" is a simple count of favorable alleles.
+
+```{r scoring}
+# Calculate stacking scores for all individuals
+scores <- haplo$score_stacking(superior_haplos)
+
+# View scores for the first few individuals
+head(scores)
+```
+
+## Validating the Trend
+
+Finally, we visualize the relationship between the Stacking Score and the actual Phenotype. A strong positive correlation indicates that accumulating these specific haplotypes effectively drives phenotypic improvement.
+
+```{r trend, fig.width=6, fig.height=6}
+# Plot the stacking trend with a regression line and R-squared value
+haplo$plot_stacking_trend(scores = scores)
+```
+
+This plot serves as a validation of the identified haplotypes. If the regression is strong (high $R^2$), breeders can confidently select individuals with high stacking scores for future crosses.
