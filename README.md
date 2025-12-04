@@ -111,4 +111,4 @@ haplo$save_project("my_analysis.rds")
 
 ## References
 
-Shaffer, et al. (2025). _Optimizing Haplotype Construction for Genomic Prediction in Maize_. Journal of Theoretical and Applied Genetics.
+Shaffer, et al. (2025). _Local genomic estimates provide a powerful framework for haplotype discovery_. biorxiv.
