@@ -107,6 +107,9 @@ HaploObject <- R6::R6Class("HaploObject",
                     rds_file <- bigsnpr::snp_readVCF(matrix_or_path, backingfile = private$backing_file)
                     obj <- bigsnpr::snp_attach(rds_file)
                     self$geno <- obj$genotypes
+                } else if (ext == "csv" || ext == "txt") {
+                    # CSV/TXT file with potential variable encodings
+                    private$read_csv_genotypes(matrix_or_path)
                 } else if (ext == "rds") {
                     # Bigstatsr/Bigsnpr RDS
                     obj <- bigsnpr::snp_attach(matrix_or_path)
@@ -213,12 +216,11 @@ HaploObject <- R6::R6Class("HaploObject",
             # Populates self$blocks with Start/End indices
             if (is.null(self$map)) stop("Map not loaded. Please load map first.")
 
-            if (is.null(self$map)) stop("Map not loaded. Please load map first.")
 
             if (!is.null(self$active_markers)) {
                 n_markers <- length(self$active_markers)
             } else {
-                n_markers <- nrow(self$map)
+                n_markers <- ncol(self$geno)
             }
 
             starts <- seq(1, n_markers, by = window_size)
@@ -363,7 +365,27 @@ HaploObject <- R6::R6Class("HaploObject",
             # tcrossprodSelf is XX'.
 
             # big_tcrossprodSelf computes XX'
+            # big_tcrossprodSelf computes XX'
             ind_col <- if (!is.null(self$active_markers)) self$active_markers else bigstatsr::cols_along(self$geno)
+
+            # Robustness: Check for zero variance markers in the selection
+            # big_scale() will error if any column has 0 variance.
+            # Efficiently check variances using big_colstats
+            stats_check <- bigstatsr::big_colstats(self$geno, ind.col = ind_col)
+            keep_bool <- stats_check$var > 1e-8
+
+            if (!all(keep_bool)) {
+                n_drop <- sum(!keep_bool)
+                message("Automatically excluding ", n_drop, " monomorphic markers from analysis.")
+                ind_col <- ind_col[keep_bool]
+
+                # Update active markers to persist this cleanup
+                self$active_markers <- ind_col
+
+                # If no markers left?
+                if (length(ind_col) == 0) stop("No polymorphic markers left for analysis.")
+            }
+
             K <- bigstatsr::big_tcrossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = ind_col)
             K <- K[] # Convert to standard matrix
 
@@ -458,18 +480,42 @@ HaploObject <- R6::R6Class("HaploObject",
                     end <- self$blocks$End[i]
                     indices <- start:end
 
-                    # Extract effects for this block
-                    u_block <- self$marker_effects[indices]
+                    # Handle active_markers (subsetting)
+                    if (!is.null(self$active_markers)) {
+                        # Identify which markers in this block are active
+                        valid_idx_in_block <- which(indices %in% self$active_markers)
 
-                    # --- OPTIMIZATION: Use pre-calculated stats ---
-                    mus <- centers_all[indices]
-                    sigmas <- scales_all[indices]
+                        if (length(valid_idx_in_block) == 0) {
+                            # No active markers in this block
+                            # Return zeros
+                            n_ind <- nrow(self$geno)
+                            return(list(gebv = rep(0, n_ind), var = 0))
+                        }
+
+                        # Get absolute indices of active markers in this block
+                        abs_indices <- indices[valid_idx_in_block]
+
+                        # Find their position in the active_markers vector (to index effects/stats)
+                        rel_indices <- match(abs_indices, self$active_markers)
+
+                        u_block <- self$marker_effects[rel_indices]
+                        mus <- centers_all[rel_indices]
+                        sigmas <- scales_all[rel_indices]
+
+                        # Indices for big_prodVec must be absolute
+                        real_indices <- abs_indices
+                    } else {
+                        # All markers active
+                        u_block <- self$marker_effects[indices]
+                        mus <- centers_all[indices]
+                        sigmas <- scales_all[indices]
+                        real_indices <- indices
+                    }
 
                     weights <- u_block / sigmas
                     offset <- sum(mus * weights)
 
                     # big_prodVec is efficient as it uses memory mapping
-                    real_indices <- if (!is.null(self$active_markers)) self$active_markers[indices] else indices
                     gebv <- bigstatsr::big_prodVec(self$geno, weights, ind.col = real_indices)
                     gebv <- gebv - offset
 
@@ -1451,7 +1497,97 @@ HaploObject <- R6::R6Class("HaploObject",
         }
     ),
     private = list(
-        backing_file = NULL
+        backing_file = NULL,
+
+        #' @description
+        #' Read CSV/TXT genotypes with robust parsing.
+        #' @param path Path to file.
+        read_csv_genotypes = function(path) {
+            message("Reading genotypes from ", path, "...")
+
+            # Fast read
+            dt <- data.table::fread(path, data.table = FALSE)
+
+            # Heuristic: Check if first column is ID
+            # If first column is character and unique, treat as ID and remove
+            first_col <- dt[[1]]
+            if (is.character(first_col) || is.factor(first_col)) {
+                # Check uniqueness
+                if (anyDuplicated(first_col) == 0) {
+                    message("Detected Sample IDs in first column. Using them as row names (if needed) and removing from matrix.")
+                    # We can't easily assign rownames to FBM, but we can store them?
+                    # For now, just drop the column
+                    dt <- dt[, -1, drop = FALSE]
+                }
+            }
+
+            # Check for non-numeric data
+            is_numeric <- all(vapply(dt, is.numeric, logical(1)))
+
+            if (!is_numeric) {
+                message("Detected non-numeric genotypes. Attempting to parse...")
+                # Conversion function
+                parse_geno <- function(x) {
+                    if (is.numeric(x)) {
+                        return(x)
+                    }
+                    x <- as.character(x)
+                    # Replace common patterns
+                    # 0/0, 0|0 -> 0
+                    # 0/1, 0|1, 1/0, 1|0 -> 1
+                    # 1/1, 1|1 -> 2
+                    # . -> NA
+                    res <- rep(NA_real_, length(x))
+
+                    # Exact matches for speed
+                    res[x %in% c("0", "0/0", "0|0", "A/A", "A|A")] <- 0
+                    res[x %in% c("1", "0/1", "0|1", "1/0", "1|0", "A/B", "A|B", "B/A", "B|A")] <- 1
+                    res[x %in% c("2", "1/1", "1|1", "B/B", "B|B")] <- 2
+
+                    return(res)
+                }
+
+                # Apply to all columns
+                # data.table set function is efficient but we converted to DF above.
+                # Let's convert back to DT for fast processing if large?
+                # Or just iterate since we're in-memory anyway before FBM.
+
+                for (j in seq_len(ncol(dt))) {
+                    if (!is.numeric(dt[[j]])) {
+                        dt[[j]] <- parse_geno(dt[[j]])
+                    }
+                }
+            }
+
+            # Convert to matrix
+            mat <- as.matrix(dt)
+
+            # Check for NAs and warn
+            n_na <- sum(is.na(mat))
+            if (n_na > 0) {
+                warning("Imported matrix contains ", n_na, " missing values (NA). Imputation may be needed.")
+            }
+
+            message("Converting to FBM...")
+            self$geno <- bigstatsr::as_FBM(mat,
+                type = "double",
+                backingfile = private$backing_file
+            )
+
+            # Generate dummy map if needed to strictly satisfy bigsnpr-like expectations (though we use our own map usually)
+            # If headers existed, they are colnames(dt)
+            marker_names <- colnames(dt)
+            if (length(marker_names) == ncol(self$geno)) {
+                # Basic map
+                self$map <- data.table::data.table(
+                    marker = marker_names,
+                    chr = 1,
+                    pos = 1:ncol(self$geno),
+                    ref = "A",
+                    alt = "B"
+                )
+            }
+        }
     )
 )
 
