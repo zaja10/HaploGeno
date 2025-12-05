@@ -1210,15 +1210,29 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @param groups Optional vector of groups for coloring individuals.
         #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
         #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
-        plot_haplo_biplot = function(top_n = 10, groups = NULL, scale_vectors = NULL, label_blocks = TRUE) {
+        #' @param highlight_ind Optional. Vector of sample names or indices to highlight.
+        plot_haplo_biplot = function(top_n = 10, groups = NULL, scale_vectors = NULL, label_blocks = TRUE, highlight_ind = NULL) {
             # 1. Validation
             if (is.null(self$hrm)) stop("HRM not computed. Run compute_hrm() first.")
             if (is.null(self$local_gebv)) stop("Local GEBVs not calculated. Run calculate_local_gebv() first.")
             if (is.null(self$significance)) stop("Significance/Variance not calculated. Run test_significance() first.")
 
             # 2. Get PC Scores (Individuals)
-            message("Calculating PCA of HRM...")
-            eig <- eigen(self$hrm, symmetric = TRUE)
+            message("Calculating PCA of Centered HRM...")
+
+            # Double Center the HRM: K_centered = (I - 1/n J) K (I - 1/n J)
+            # Efficiently: Kc = K - rowMeans(K) - colMeans(K) + mean(K)
+            K <- self$hrm
+            n <- nrow(K)
+            row_means <- rowMeans(K)
+            mean_K <- mean(K)
+
+            # Use sweep for broadcasting subtract
+            Kc <- sweep(K, 1, row_means, "-")
+            Kc <- sweep(Kc, 2, row_means, "-") # Since K is symmetric, rowMeans == colMeans
+            Kc <- Kc + mean_K
+
+            eig <- eigen(Kc, symmetric = TRUE)
             pc_scores <- data.frame(
                 PC1 = eig$vectors[, 1],
                 PC2 = eig$vectors[, 2]
@@ -1226,6 +1240,9 @@ HaploObject <- R6::R6Class("HaploObject",
 
             # Calculate variance explained
             var_expl <- eig$values / sum(eig$values) * 100
+            # Ensure no negative variances due to numerical error (though Kc is PSD if K is)
+            var_expl <- pmax(var_expl, 0)
+
             lab_x <- paste0("PC1 (", round(var_expl[1], 1), "%)")
             lab_y <- paste0("PC2 (", round(var_expl[2], 1), "%)")
 
@@ -1235,13 +1252,10 @@ HaploObject <- R6::R6Class("HaploObject",
             top_blocks_ids <- self$significance$BlockID[top_blocks_idx]
 
             # Extract Local GEBVs for these blocks
-            # Matrix: Rows=Ind, Cols=Blocks
-            # internal local_gebv is now list containing $matrix
             local_gebv_mat <- if (is.list(self$local_gebv) && "matrix" %in% names(self$local_gebv)) self$local_gebv$matrix else self$local_gebv
             sel_gebvs <- local_gebv_mat[, top_blocks_idx, drop = FALSE]
 
             # Calculate correlations (Loadings) between Local GEBVs and PCs
-            # We use correlation to see how strongly a block drives separation along that axis
             loadings <- data.frame(
                 BlockID = top_blocks_ids,
                 v1 = cor(sel_gebvs, pc_scores$PC1),
@@ -1249,11 +1263,12 @@ HaploObject <- R6::R6Class("HaploObject",
             )
 
             # 4. Scaling
-            # Auto-scale vectors to fit the plot bounds of the individuals
             max_pc <- max(abs(c(pc_scores$PC1, pc_scores$PC2)))
             max_load <- max(abs(c(loadings$v1, loadings$v2)))
 
             if (is.null(scale_vectors)) {
+                # Handle case where max_load is 0 or NA
+                if (is.na(max_load) || max_load == 0) max_load <- 1
                 scaling_factor <- max_pc / max_load * 0.8 # 80% of plot radius
             } else {
                 scaling_factor <- scale_vectors
@@ -1265,24 +1280,26 @@ HaploObject <- R6::R6Class("HaploObject",
             # 5. Plotting with Base R
             # Add grouping if provided
             if (is.null(groups)) {
-                pt_col <- "black"
+                pt_col <- rgb(0, 0, 0, 0.3) # Semi-transparent black default
+                pt_pch <- 16
             } else {
                 if (length(groups) != nrow(self$hrm)) {
                     warning("Length of groups does not match n_samples. Ignoring.")
-                    pt_col <- "black"
+                    pt_col <- rgb(0, 0, 0, 0.3)
+                    pt_pch <- 16
                 } else {
-                    # Simple color mapping
                     u_groups <- unique(groups)
                     palette <- rainbow(length(u_groups))
                     pt_col <- palette[match(groups, u_groups)]
+                    pt_pch <- 16
                 }
             }
 
             # Setup empty plot
-            x_lim <- range(c(pc_scores$PC1, loadings$v1))
-            y_lim <- range(c(pc_scores$PC2, loadings$v2))
+            x_lim <- range(c(pc_scores$PC1, loadings$v1), na.rm = TRUE)
+            y_lim <- range(c(pc_scores$PC2, loadings$v2), na.rm = TRUE)
 
-            # Extend limits slightly
+            # Extend limits
             x_lim <- x_lim + c(-1, 1) * diff(x_lim) * 0.1
             y_lim <- y_lim + c(-1, 1) * diff(y_lim) * 0.1
 
@@ -1290,7 +1307,7 @@ HaploObject <- R6::R6Class("HaploObject",
                 xlab = lab_x, ylab = lab_y,
                 main = "Genomic Architecture Biplot",
                 sub = paste("Vectors represent top", top_n, "high-variance haploblocks"),
-                col = pt_col, pch = 16, cex = 1.2,
+                col = pt_col, pch = pt_pch, cex = 1.0,
                 xlim = x_lim, ylim = y_lim
             )
 
@@ -1303,13 +1320,38 @@ HaploObject <- R6::R6Class("HaploObject",
                 col = "darkred", lwd = 2, length = 0.1
             )
 
-            # Add labels if requested
+            # Add labels for blocks
             if (label_blocks) {
                 text(
                     x = loadings$v1, y = loadings$v2,
                     labels = paste0("Blk", loadings$BlockID),
                     pos = 1, col = "darkred", font = 2, cex = 0.8
                 )
+            }
+
+            # Plot Highlighted Individuals
+            if (!is.null(highlight_ind)) {
+                # Resolve names to indices if possible
+                idx <- highlight_ind
+                labels <- highlight_ind
+
+                # Check if names are passed but we can't resolve them
+                if (is.character(highlight_ind)) {
+                    # Try to match against pheno name or similar?
+                    # Ideally we should have names on the HRM or passed explicitly.
+                    # For now, if numeric, assume indices.
+                    # If character, warn and skip if no names?
+                    # Let's assume indices are safer as per previous logic.
+                    warning("Using character names for highlighting without named data matching logic might be unstable. Proceeding if they are valid indices or names.")
+                }
+
+                # subset
+                sel_pc <- pc_scores[idx, , drop = FALSE]
+
+                # Plot points
+                points(sel_pc$PC1, sel_pc$PC2, col = "blue", pch = 17, cex = 1.5)
+                # Plot labels
+                text(sel_pc$PC1, sel_pc$PC2, labels = labels, pos = 3, col = "blue", font = 2, cex = 0.9)
             }
 
             # Legend if groups exist
@@ -1365,20 +1407,43 @@ HaploObject <- R6::R6Class("HaploObject",
                     warning("Character names for checks might not be supported if matrix has no rownames. Using indices is safer.")
                 }
 
-                check_vals <- scaled_effects[highlight_ind]
-                check_labels <- if (is.character(highlight_ind)) highlight_ind else paste0("Check:", highlight_ind)
+                check_vals <- NULL
+                check_labels <- NULL
+
+                # Check for valid indices first
+                if (is.numeric(highlight_ind)) {
+                    check_vals <- scaled_effects[highlight_ind]
+                    check_labels <- if (!is.null(names(highlight_ind))) names(highlight_ind) else paste0("Check:", highlight_ind)
+                } else if (is.character(highlight_ind)) {
+                    # Try to match against rownames if they exist
+                    rn <- rownames(local_gebv_mat)
+                    if (!is.null(rn)) {
+                        match_idx <- match(highlight_ind, rn)
+                        valid_match <- !is.na(match_idx)
+                        if (any(valid_match)) {
+                            check_vals <- scaled_effects[match_idx[valid_match]]
+                            check_labels <- highlight_ind[valid_match]
+                        }
+                    }
+                    # If names didn't work and we are desperate?
+                    if (is.null(check_vals)) {
+                        warning("Could not match character names to data rownames. Ensure matrix has rownames.")
+                    }
+                }
 
                 # Filter valid
-                valid_idx <- which(is.finite(check_vals))
-                if (length(valid_idx) > 0) {
-                    check_vals <- check_vals[valid_idx]
-                    check_labels <- check_labels[valid_idx]
+                if (!is.null(check_vals)) {
+                    valid_idx <- which(is.finite(check_vals))
+                    if (length(valid_idx) > 0) {
+                        check_vals <- check_vals[valid_idx]
+                        check_labels <- check_labels[valid_idx]
 
-                    abline(v = check_vals, col = "red", lty = 1, lwd = 1.5)
-                    # Add labels on top axis or above
-                    axis(3, at = check_vals, labels = check_labels, col.axis = "red", col = "red", las = 2, cex.axis = 0.7)
-                } else if (length(highlight_ind) > 0) {
-                    warning("No valid values found for highlighted checks (indices out of bounds or names not matched).")
+                        abline(v = check_vals, col = "red", lty = 1, lwd = 1.5)
+                        # Add labels on top axis or above
+                        axis(3, at = check_vals, labels = check_labels, col.axis = "red", col = "red", las = 2, cex.axis = 0.7)
+                    } else {
+                        warning("No finite values found for checks.")
+                    }
                 }
             }
 

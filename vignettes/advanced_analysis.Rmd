@@ -120,7 +120,6 @@ Finally, we visualize the relationship between the Stacking Score and the actual
 haplo$plot_stacking_trend(scores = scores)
 ```
 
-
 # 5. Haplotype of Interest (HOI) Analysis
 
 Beyond identifying blocks, we often want to deeply analyze a specific high-variance locus to identify which haplotypes are driving the superior performance.
@@ -156,13 +155,12 @@ Individuals to the right of the green line carry the superior haplotypes (HOIs) 
 
 Finally, we can visualize the relationship between the overall population structure and the specific genomic regions driving differentiation. The **Genomic Architecture Biplot** plots individuals based on the PCA of the Haplotype Relationship Matrix (HRM) and overlays vectors representing the local GEBVs of high-variance haploblocks.
 
-```r
+```{r}
 # Plot the biplot showing the top 5 blocks
 # This shows which blocks are driving the separation along the principal components
 haplo$plot_haplo_biplot(top_n = 5, label_blocks = TRUE)
 ```
 
-- **Points**: Individuals.
-- **Vectors**: High-variance haploblocks.
-- **Interpretation**: Length of the vector indicates how strongly that block differentiates the population. Direction indicates which individuals have high effects for that block.
-
+-   **Points**: Individuals.
+-   **Vectors**: High-variance haploblocks.
+-   **Interpretation**: Length of the vector indicates how strongly that block differentiates the population. Direction indicates which individuals have high effects for that block.

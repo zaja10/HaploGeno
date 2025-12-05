@@ -24,8 +24,14 @@ test_that("plot_hoi_distribution works", {
     # Test with checks (indices)
     expect_error(haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c(1, 5)), NA)
 
-    # Test with checks (names - warning expected if no rownames mock)
-    expect_warning(haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c("Ind1")), "Using indices is safer")
+    # Test with checks (names with rownames present)
+    rownames(local_gebv) <- paste0("Ind", 1:n_ind)
+    haplo$local_gebv <- list(matrix = local_gebv)
+    expect_error(haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c("Ind1", "Ind5")), NA)
+
+    # Test with checks (names with NO rownames - warning expected)
+    haplo$local_gebv <- list(matrix = matrix(rnorm(n_ind * n_blocks), nrow = n_ind)) # Reset without names
+    expect_warning(haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c("Ind1")), "Could not match character names")
 
     # Test validation
     expect_error(haplo$plot_hoi_distribution(block_id = 999), "Invalid block_id")
