@@ -1090,6 +1090,116 @@ HaploObject <- R6::R6Class("HaploObject",
                 message("Note: The backing file (.bk) is located at: ", bk_file)
                 message("Ensure this file is kept with the .rds file if moving the project.")
             }
+        },
+
+        #' @description
+        #' Scale Haplotype Effects.
+        #' Centers the local GEBV matrix columns to have a mean of zero.
+        #' @param local_gebv A matrix of local GEBVs (N x n_blocks). If NULL, uses self$local_gebv.
+        #' @return A matrix of scaled local GEBVs.
+        scale_haplo_effects = function(local_gebv = NULL) {
+            if (is.null(local_gebv)) {
+                if (is.null(self$local_gebv)) stop("Local GEBVs not loaded or computed.")
+                local_gebv <- self$local_gebv$matrix
+            } else if (is.list(local_gebv) && !is.data.frame(local_gebv) && "matrix" %in% names(local_gebv)) {
+                local_gebv <- local_gebv$matrix
+            }
+            # Center columns to mean 0
+            scaled_gebv <- scale(local_gebv, center = TRUE, scale = FALSE)
+            return(scaled_gebv)
+        },
+
+        #' @description
+        #' Analyze Haplotypes of Interest (HOI).
+        #' Identifies superior haplotypes at a specific block by analyzing distribution.
+        #' @param block_id The ID of the block to analyze.
+        #' @param local_gebv A matrix of local GEBVs. If NULL, uses self$local_gebv.
+        #' @return A list containing peak values, p-value, HOI haplotypes, and stats.
+        analyze_hoi = function(block_id, local_gebv = NULL) {
+            if (is.null(self$haplo_mat)) stop("Haplotypes must be encoded first.")
+            if (is.null(local_gebv)) {
+                if (is.null(self$local_gebv)) stop("Local GEBVs not loaded or computed.")
+                local_gebv <- self$local_gebv$matrix
+            } else if (is.list(local_gebv) && !is.data.frame(local_gebv) && "matrix" %in% names(local_gebv)) {
+                local_gebv <- local_gebv$matrix
+            }
+
+            # Check if block_id is valid
+            if (!block_id %in% 1:ncol(local_gebv)) stop("Invalid block_id.")
+
+            effects <- local_gebv[, block_id]
+
+            # Scale effects using internal method (or direct scale)
+            # scaled_effects <- self$scale_haplo_effects(matrix(effects, ncol=1)) # Returns matrix
+            # Use direct scale to return vector/single column matrix without complications
+            scaled_effects <- scale(effects, center = TRUE, scale = FALSE)
+
+            # Estimate density
+            d <- stats::density(scaled_effects)
+
+            # Find peaks (local maxima)
+            peak_indices <- which(diff(sign(diff(d$y))) == -2) + 1
+            peak_x <- d$x[peak_indices]
+            peak_y <- d$y[peak_indices]
+
+            if (length(peak_indices) < 2) {
+                warning("Less than 2 peaks detected. Returning simple stats.")
+                return(list(
+                    peaks = peak_x,
+                    p_value = NA,
+                    hoi_haplotypes = NULL,
+                    stats = summary(scaled_effects)
+                ))
+            }
+
+            # Sort peaks by x value
+            sorted_peaks <- sort(peak_x)
+
+            # Identify the two most prominent peaks
+            top_peaks_idx <- order(peak_y, decreasing = TRUE)[1:2]
+            main_peaks_x <- sort(peak_x[top_peaks_idx])
+
+            low_peak <- main_peaks_x[1]
+            high_peak <- main_peaks_x[2]
+
+            # Find nadir between them
+            range_indices <- which(d$x > low_peak & d$x < high_peak)
+            if (length(range_indices) > 0) {
+                nadir_idx <- range_indices[which.min(d$y[range_indices])]
+                nadir_x <- d$x[nadir_idx]
+            } else {
+                nadir_x <- (low_peak + high_peak) / 2
+            }
+
+            # Split individuals
+            group_high <- which(scaled_effects > nadir_x)
+            group_low <- which(scaled_effects <= nadir_x)
+
+            # Significance test
+            if (length(group_high) > 1 && length(group_low) > 1) {
+                test_res <- stats::t.test(scaled_effects[group_high], scaled_effects[group_low], alternative = "greater")
+                p_val <- test_res$p.value
+            } else {
+                p_val <- NA
+            }
+
+            # Identify haplotypes associated with the high group
+            haplo_col <- self$haplo_mat[, block_id]
+            haplo_means <- tapply(scaled_effects, haplo_col, mean)
+            hoi_haplos <- as.integer(names(haplo_means[haplo_means > nadir_x]))
+
+            return(list(
+                peaks = main_peaks_x,
+                nadir = nadir_x,
+                p_value = p_val,
+                hoi_haplotypes = hoi_haplos,
+                stats = list(
+                    mean_high = mean(scaled_effects[group_high]),
+                    mean_low = mean(scaled_effects[group_low]),
+                    n_high = length(group_high),
+                    n_low = length(group_low)
+                )
+            ))
         }
     ),
     private = list(

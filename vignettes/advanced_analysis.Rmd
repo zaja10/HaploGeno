@@ -9,8 +9,8 @@ vignette: >
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
-    collapse = TRUE,
-    comment = "#>"
+  collapse = TRUE,
+  comment = "#>"
 )
 ```
 
@@ -120,4 +120,42 @@ Finally, we visualize the relationship between the Stacking Score and the actual
 haplo$plot_stacking_trend(scores = scores)
 ```
 
-This plot serves as a validation of the identified haplotypes. If the regression is strong (high $R^2$), breeders can confidently select individuals with high stacking scores for future crosses.
+
+# 5. Haplotype of Interest (HOI) Analysis
+
+Beyond identifying blocks, we often want to deeply analyze a specific high-variance locus to identify which haplotypes are driving the superior performance.
+
+## 5.1 Analyzing Effect Distributions
+
+The `analyze_hoi()` function scales the local GEBVs for a specific block and analyzes their distribution. It assumes a multimodal distribution where one peak corresponds to the Haplotype of Interest (HOI).
+
+```{r}
+# Analyze a specific block (e.g., Block 1 which we know has signal)
+# This function scales effects, detects peaks, and runs a t-test
+hoi_res <- haplo$analyze_hoi(local_gebv = haplo$local_gebv, block_id = 1)
+
+# Inspect the results
+print(paste("P-value for separation:", format(hoi_res$p_value, digits = 4)))
+print("Superior Haplotypes:")
+print(hoi_res$hoi_haplotypes)
+```
+
+## 5.2 Visualizing the Split
+
+We can visualize the distribution of effects and the split between the "high" and "low" groups.
+
+```{r}
+# Extract effects for Block 1
+block_effects <- haplo$local_gebv$matrix[, 1]
+scaled_effects <- haplo$scale_haplo_effects(matrix(block_effects, ncol=1))
+
+# Plot density
+plot(density(scaled_effects), main = "Distribution of Haplotype Effects (Block 1)",
+     xlab = "Scaled Effect Size", col = "blue", lwd = 2)
+abline(v = hoi_res$peaks, col = "red", lty = 2) # Mark peaks
+abline(v = hoi_res$nadir, col = "darkgreen", lty = 1, lwd = 2) # Mark split point
+legend("topleft", legend = c("Density", "Peaks", "Split Nadir"),
+       col = c("blue", "red", "darkgreen"), lty = c(1, 2, 1), lwd = 2)
+```
+
+Individuals to the right of the green line carry the superior haplotypes (HOIs) for this locus.

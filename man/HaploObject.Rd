@@ -60,6 +60,8 @@ HaploObject Class
 \item \href{#method-HaploObject-impute_genotypes}{\code{HaploObject$impute_genotypes()}}
 \item \href{#method-HaploObject-filter_monomorphic}{\code{HaploObject$filter_monomorphic()}}
 \item \href{#method-HaploObject-save_project}{\code{HaploObject$save_project()}}
+\item \href{#method-HaploObject-scale_haplo_effects}{\code{HaploObject$scale_haplo_effects()}}
+\item \href{#method-HaploObject-analyze_hoi}{\code{HaploObject$analyze_hoi()}}
 \item \href{#method-HaploObject-clone}{\code{HaploObject$clone()}}
 }
 }
@@ -475,6 +477,50 @@ Save the project to an RDS file.
 \item{\code{path}}{Path to the output .rds file.}
 }
 \if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-scale_haplo_effects"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-scale_haplo_effects}{}}}
+\subsection{Method \code{scale_haplo_effects()}}{
+Scale Haplotype Effects.
+Centers the local GEBV matrix columns to have a mean of zero.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$scale_haplo_effects(local_gebv = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{local_gebv}}{A matrix of local GEBVs (N x n_blocks). If NULL, uses self$local_gebv.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A matrix of scaled local GEBVs.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-analyze_hoi"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-analyze_hoi}{}}}
+\subsection{Method \code{analyze_hoi()}}{
+Analyze Haplotypes of Interest (HOI).
+Identifies superior haplotypes at a specific block by analyzing distribution.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$analyze_hoi(block_id, local_gebv = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{block_id}}{The ID of the block to analyze.}
+
+\item{\code{local_gebv}}{A matrix of local GEBVs. If NULL, uses self$local_gebv.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A list containing peak values, p-value, HOI haplotypes, and stats.
 }
 }
 \if{html}{\out{<hr>}}
