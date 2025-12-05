@@ -145,21 +145,9 @@ print(hoi_res$hoi_haplotypes)
 We can visualize the distribution of effects and the split between the "high" and "low" groups.
 
 ```{r}
-# Extract effects for Block 1
-block_effects <- haplo$local_gebv$matrix[, 1]
-scaled_effects <- haplo$scale_haplo_effects(matrix(block_effects, ncol = 1))
-
-# Plot density
-plot(density(scaled_effects),
-  main = "Distribution of Haplotype Effects (Block 1)",
-  xlab = "Scaled Effect Size", col = "blue", lwd = 2
-)
-abline(v = hoi_res$peaks, col = "red", lty = 2) # Mark peaks
-abline(v = hoi_res$nadir, col = "darkgreen", lty = 1, lwd = 2) # Mark split point
-legend("topleft",
-  legend = c("Density", "Peaks", "Split Nadir"),
-  col = c("blue", "red", "darkgreen"), lty = c(1, 2, 1), lwd = 2
-)
+# Visualize distribution with simplified method
+# We can also highlight specific "check" genotypes (e.g., individuals 1, 10, 20)
+haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c(1, 10, 20))
 ```
 
 Individuals to the right of the green line carry the superior haplotypes (HOIs) for this locus.

@@ -4,7 +4,7 @@ import(R6)
 import(bigstatsr)
 import(data.table)
 import(methods)
-import(ggplot2)
+
 import(future)
 import(future.apply)
 import(bigsnpr)

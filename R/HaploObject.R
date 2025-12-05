@@ -1147,6 +1147,7 @@ HaploObject <- R6::R6Class("HaploObject",
                 return(list(
                     peaks = peak_x,
                     p_value = NA,
+                    nadir = mean(scaled_effects, na.rm = TRUE),
                     hoi_haplotypes = NULL,
                     stats = summary(scaled_effects)
                 ))
@@ -1261,53 +1262,127 @@ HaploObject <- R6::R6Class("HaploObject",
             loadings$v1 <- loadings$v1 * scaling_factor
             loadings$v2 <- loadings$v2 * scaling_factor
 
-            # 5. Plotting with ggplot2
+            # 5. Plotting with Base R
             # Add grouping if provided
-            if (!is.null(groups)) {
+            if (is.null(groups)) {
+                pt_col <- "black"
+            } else {
                 if (length(groups) != nrow(self$hrm)) {
                     warning("Length of groups does not match n_samples. Ignoring.")
-                    pc_scores$Group <- "Ind"
+                    pt_col <- "black"
                 } else {
-                    pc_scores$Group <- as.factor(groups)
+                    # Simple color mapping
+                    u_groups <- unique(groups)
+                    palette <- rainbow(length(u_groups))
+                    pt_col <- palette[match(groups, u_groups)]
                 }
-            } else {
-                pc_scores$Group <- "Ind"
             }
 
-            p <- ggplot2::ggplot() +
-                # Plot Individuals
-                ggplot2::geom_point(
-                    data = pc_scores,
-                    ggplot2::aes(x = PC1, y = PC2, color = Group),
-                    alpha = 0.7, size = 2
-                ) +
-                # Plot Vectors (Haploblocks)
-                ggplot2::geom_segment(
-                    data = loadings,
-                    ggplot2::aes(x = 0, y = 0, xend = v1, yend = v2),
-                    arrow = ggplot2::arrow(length = ggplot2::unit(0.2, "cm")),
-                    color = "darkred", lwd = 1
-                ) +
-                ggplot2::labs(
-                    x = lab_x, y = lab_y,
-                    title = "Genomic Architecture Biplot",
-                    subtitle = paste("Vectors represent top", top_n, "high-variance haploblocks")
-                ) +
-                ggplot2::theme_minimal() +
-                ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
-                ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "grey")
+            # Setup empty plot
+            x_lim <- range(c(pc_scores$PC1, loadings$v1))
+            y_lim <- range(c(pc_scores$PC2, loadings$v2))
+
+            # Extend limits slightly
+            x_lim <- x_lim + c(-1, 1) * diff(x_lim) * 0.1
+            y_lim <- y_lim + c(-1, 1) * diff(y_lim) * 0.1
+
+            plot(pc_scores$PC1, pc_scores$PC2,
+                xlab = lab_x, ylab = lab_y,
+                main = "Genomic Architecture Biplot",
+                sub = paste("Vectors represent top", top_n, "high-variance haploblocks"),
+                col = pt_col, pch = 16, cex = 1.2,
+                xlim = x_lim, ylim = y_lim
+            )
+
+            grid()
+            abline(h = 0, v = 0, lty = 2, col = "grey")
+
+            # Plot Vectors
+            arrows(
+                x0 = 0, y0 = 0, x1 = loadings$v1, y1 = loadings$v2,
+                col = "darkred", lwd = 2, length = 0.1
+            )
 
             # Add labels if requested
             if (label_blocks) {
-                p <- p + ggplot2::geom_text(
-                    data = loadings,
-                    ggplot2::aes(x = v1, y = v2, label = paste0("Blk", BlockID)),
-                    vjust = -0.5, color = "darkred", fontface = "bold"
+                text(
+                    x = loadings$v1, y = loadings$v2,
+                    labels = paste0("Blk", loadings$BlockID),
+                    pos = 1, col = "darkred", font = 2, cex = 0.8
                 )
             }
 
-            print(p)
+            # Legend if groups exist
+            if (!is.null(groups)) {
+                legend("topright", legend = u_groups, col = palette, pch = 16, bty = "n", cex = 0.8)
+            }
+
             invisible(list(scores = pc_scores, loadings = loadings))
+        },
+
+        #' @description
+        #' Plot HOI Effect Distribution with Checks.
+        #' Visualizes the distribution of scaled effects for a block and key check genotypes.
+        #' @param block_id Integer. The ID of the block to visualize.
+        #' @param highlight_ind Optional. Vector of sample names or indices to highlight as checks.
+        plot_hoi_distribution = function(block_id, highlight_ind = NULL) {
+            # 1. Validation
+            if (is.null(self$local_gebv)) stop("Local GEBVs not calculated. Run calculate_local_gebv() first.")
+
+            # 2. Get Data
+            # local_gebv is list with $matrix
+            local_gebv_mat <- if (is.list(self$local_gebv) && "matrix" %in% names(self$local_gebv)) self$local_gebv$matrix else self$local_gebv
+
+            if (block_id < 1 || block_id > ncol(local_gebv_mat)) stop("Invalid block_id.")
+
+            effects <- local_gebv_mat[, block_id]
+            scaled_effects <- scale(effects, center = TRUE, scale = FALSE)
+
+            # Run analysis to get nadir/peaks for context
+            hoi_res <- self$analyze_hoi(block_id)
+            nadir <- hoi_res$nadir
+
+            # 3. Prepare Plot Data
+            d <- stats::density(as.vector(scaled_effects))
+
+            # Base R Plot
+            plot(d,
+                main = paste("Effect Distribution - Block", block_id),
+                xlab = "Scaled Effect", ylab = "Density", col = "blue", lwd = 2
+            )
+
+            # Fill
+            polygon(d, col = rgb(0.68, 0.85, 0.9, 0.5), border = "blue") # lightblue
+
+            # Nadir
+            grid()
+            abline(v = nadir, col = "darkgreen", lty = 2, lwd = 2)
+            mtext("Separation", at = nadir, col = "darkgreen", line = 0.5, cex = 0.8)
+
+            # 4. Highlight Checks
+            if (!is.null(highlight_ind)) {
+                if (is.character(highlight_ind)) {
+                    warning("Character names for checks might not be supported if matrix has no rownames. Using indices is safer.")
+                }
+
+                check_vals <- scaled_effects[highlight_ind]
+                check_labels <- if (is.character(highlight_ind)) highlight_ind else paste0("Check:", highlight_ind)
+
+                # Filter valid
+                valid_idx <- which(is.finite(check_vals))
+                if (length(valid_idx) > 0) {
+                    check_vals <- check_vals[valid_idx]
+                    check_labels <- check_labels[valid_idx]
+
+                    abline(v = check_vals, col = "red", lty = 1, lwd = 1.5)
+                    # Add labels on top axis or above
+                    axis(3, at = check_vals, labels = check_labels, col.axis = "red", col = "red", las = 2, cex.axis = 0.7)
+                } else if (length(highlight_ind) > 0) {
+                    warning("No valid values found for highlighted checks (indices out of bounds or names not matched).")
+                }
+            }
+
+            invisible(hoi_res)
         }
     ),
     private = list(
