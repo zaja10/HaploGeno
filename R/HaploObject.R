@@ -1200,6 +1200,114 @@ HaploObject <- R6::R6Class("HaploObject",
                     n_low = length(group_low)
                 )
             ))
+        },
+
+        #' @description
+        #' Generate a Genomic Architecture Biplot.
+        #' Plots individuals based on HRM PCA and overlays vectors for high-variance haploblocks.
+        #' @param top_n Number of high-variance blocks to display as vectors.
+        #' @param groups Optional vector of groups for coloring individuals.
+        #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
+        #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
+        plot_haplo_biplot = function(top_n = 10, groups = NULL, scale_vectors = NULL, label_blocks = TRUE) {
+            # 1. Validation
+            if (is.null(self$hrm)) stop("HRM not computed. Run compute_hrm() first.")
+            if (is.null(self$local_gebv)) stop("Local GEBVs not calculated. Run calculate_local_gebv() first.")
+            if (is.null(self$significance)) stop("Significance/Variance not calculated. Run test_significance() first.")
+
+            # 2. Get PC Scores (Individuals)
+            message("Calculating PCA of HRM...")
+            eig <- eigen(self$hrm, symmetric = TRUE)
+            pc_scores <- data.frame(
+                PC1 = eig$vectors[, 1],
+                PC2 = eig$vectors[, 2]
+            )
+
+            # Calculate variance explained
+            var_expl <- eig$values / sum(eig$values) * 100
+            lab_x <- paste0("PC1 (", round(var_expl[1], 1), "%)")
+            lab_y <- paste0("PC2 (", round(var_expl[2], 1), "%)")
+
+            # 3. Get Top Blocks (Loadings)
+            # Sort blocks by Variance
+            top_blocks_idx <- order(self$significance$Variance, decreasing = TRUE)[1:top_n]
+            top_blocks_ids <- self$significance$BlockID[top_blocks_idx]
+
+            # Extract Local GEBVs for these blocks
+            # Matrix: Rows=Ind, Cols=Blocks
+            # internal local_gebv is now list containing $matrix
+            local_gebv_mat <- if (is.list(self$local_gebv) && "matrix" %in% names(self$local_gebv)) self$local_gebv$matrix else self$local_gebv
+            sel_gebvs <- local_gebv_mat[, top_blocks_idx, drop = FALSE]
+
+            # Calculate correlations (Loadings) between Local GEBVs and PCs
+            # We use correlation to see how strongly a block drives separation along that axis
+            loadings <- data.frame(
+                BlockID = top_blocks_ids,
+                v1 = cor(sel_gebvs, pc_scores$PC1),
+                v2 = cor(sel_gebvs, pc_scores$PC2)
+            )
+
+            # 4. Scaling
+            # Auto-scale vectors to fit the plot bounds of the individuals
+            max_pc <- max(abs(c(pc_scores$PC1, pc_scores$PC2)))
+            max_load <- max(abs(c(loadings$v1, loadings$v2)))
+
+            if (is.null(scale_vectors)) {
+                scaling_factor <- max_pc / max_load * 0.8 # 80% of plot radius
+            } else {
+                scaling_factor <- scale_vectors
+            }
+
+            loadings$v1 <- loadings$v1 * scaling_factor
+            loadings$v2 <- loadings$v2 * scaling_factor
+
+            # 5. Plotting with ggplot2
+            # Add grouping if provided
+            if (!is.null(groups)) {
+                if (length(groups) != nrow(self$hrm)) {
+                    warning("Length of groups does not match n_samples. Ignoring.")
+                    pc_scores$Group <- "Ind"
+                } else {
+                    pc_scores$Group <- as.factor(groups)
+                }
+            } else {
+                pc_scores$Group <- "Ind"
+            }
+
+            p <- ggplot2::ggplot() +
+                # Plot Individuals
+                ggplot2::geom_point(
+                    data = pc_scores,
+                    ggplot2::aes(x = PC1, y = PC2, color = Group),
+                    alpha = 0.7, size = 2
+                ) +
+                # Plot Vectors (Haploblocks)
+                ggplot2::geom_segment(
+                    data = loadings,
+                    ggplot2::aes(x = 0, y = 0, xend = v1, yend = v2),
+                    arrow = ggplot2::arrow(length = ggplot2::unit(0.2, "cm")),
+                    color = "darkred", lwd = 1
+                ) +
+                ggplot2::labs(
+                    x = lab_x, y = lab_y,
+                    title = "Genomic Architecture Biplot",
+                    subtitle = paste("Vectors represent top", top_n, "high-variance haploblocks")
+                ) +
+                ggplot2::theme_minimal() +
+                ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+                ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "grey")
+
+            # Add labels if requested
+            if (label_blocks) {
+                p <- p + ggplot2::geom_text(
+                    data = loadings,
+                    ggplot2::aes(x = v1, y = v2, label = paste0("Blk", BlockID)),
+                    vjust = -0.5, color = "darkred", fontface = "bold"
+                )
+            }
+
+            print(p)
+            invisible(list(scores = pc_scores, loadings = loadings))
         }
     ),
     private = list(

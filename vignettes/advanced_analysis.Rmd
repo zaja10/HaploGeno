@@ -147,15 +147,34 @@ We can visualize the distribution of effects and the split between the "high" an
 ```{r}
 # Extract effects for Block 1
 block_effects <- haplo$local_gebv$matrix[, 1]
-scaled_effects <- haplo$scale_haplo_effects(matrix(block_effects, ncol=1))
+scaled_effects <- haplo$scale_haplo_effects(matrix(block_effects, ncol = 1))
 
 # Plot density
-plot(density(scaled_effects), main = "Distribution of Haplotype Effects (Block 1)",
-     xlab = "Scaled Effect Size", col = "blue", lwd = 2)
+plot(density(scaled_effects),
+  main = "Distribution of Haplotype Effects (Block 1)",
+  xlab = "Scaled Effect Size", col = "blue", lwd = 2
+)
 abline(v = hoi_res$peaks, col = "red", lty = 2) # Mark peaks
 abline(v = hoi_res$nadir, col = "darkgreen", lty = 1, lwd = 2) # Mark split point
-legend("topleft", legend = c("Density", "Peaks", "Split Nadir"),
-       col = c("blue", "red", "darkgreen"), lty = c(1, 2, 1), lwd = 2)
+legend("topleft",
+  legend = c("Density", "Peaks", "Split Nadir"),
+  col = c("blue", "red", "darkgreen"), lty = c(1, 2, 1), lwd = 2
+)
 ```
 
 Individuals to the right of the green line carry the superior haplotypes (HOIs) for this locus.
+
+# 6. Genomic Architecture Biplot
+
+Finally, we can visualize the relationship between the overall population structure and the specific genomic regions driving differentiation. The **Genomic Architecture Biplot** plots individuals based on the PCA of the Haplotype Relationship Matrix (HRM) and overlays vectors representing the local GEBVs of high-variance haploblocks.
+
+```r
+# Plot the biplot showing the top 5 blocks
+# This shows which blocks are driving the separation along the principal components
+haplo$plot_haplo_biplot(top_n = 5, label_blocks = TRUE)
+```
+
+- **Points**: Individuals.
+- **Vectors**: High-variance haploblocks.
+- **Interpretation**: Length of the vector indicates how strongly that block differentiates the population. Direction indicates which individuals have high effects for that block.
+
