@@ -145,8 +145,8 @@ We can visualize the distribution of effects and the split between the "high" an
 
 ```{r}
 # Visualize distribution with simplified method
-# We can also highlight specific "check" genotypes (e.g., individuals 1, 10, 20)
-haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c(1, 10, 20))
+# We can also highlight specific "check" genotypes (e.g., individuals 1, 10, 30)
+haplo$plot_hoi_distribution(block_id = 1, highlight_ind = c(1, 10, 30))
 ```
 
 Individuals to the right of the green line carry the superior haplotypes (HOIs) for this locus.
@@ -158,7 +158,7 @@ Finally, we can visualize the relationship between the overall population struct
 ```{r}
 # Plot the biplot showing the top 5 blocks
 # This shows which blocks are driving the separation along the principal components
-haplo$plot_haplo_biplot(top_n = 5, label_blocks = TRUE)
+haplo$plot_haplo_biplot(top_n = 5, label_blocks = TRUE, highlight_ind = c(1, 10, 30))
 ```
 
 -   **Points**: Individuals.
