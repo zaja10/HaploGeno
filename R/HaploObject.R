@@ -42,14 +42,6 @@ HaploObject <- R6::R6Class("HaploObject",
             private$backing_file <- backing_file_path
             private$temp_files <- character(0)
         },
-        #' @description
-        #' Finalize the object and clean up temporary files.
-        finalize = function() {
-            if (length(private$temp_files) > 0) {
-                # message("Cleaning up temporary files...")
-                unlink(private$temp_files)
-            }
-        },
 
 
         #' @description
@@ -423,10 +415,6 @@ HaploObject <- R6::R6Class("HaploObject",
 
             # Using bigstatsr to compute GRM efficiently
             # K = big_crossprodSelf(geno, fun.scaling = big_scale())
-            # This returns K = X'X if X is n x p? No, crossprodSelf is X'X.
-            # tcrossprodSelf is XX'.
-
-            # big_tcrossprodSelf computes XX'
             # big_tcrossprodSelf computes XX'
             ind_col <- if (!is.null(self$active_markers)) self$active_markers else bigstatsr::cols_along(self$geno)
 
@@ -683,10 +671,6 @@ HaploObject <- R6::R6Class("HaploObject",
 
             return(self$significance)
         },
-        #' @description
-        #' Calculate Percent Variance Explained (PVE) by each block.
-        #' Computes r^2 between local GEBVs and phenotypes.
-        #' @return Updated significance table.
         #' @description
         #' Calculate Percent Variance Explained (PVE) by each block.
         #' Computes r^2 between local GEBVs and phenotypes.
@@ -1987,24 +1971,14 @@ HaploObject <- R6::R6Class("HaploObject",
             self$geno <- NULL
 
             if (length(private$temp_files) > 0) {
-                message("Cleaning up temporary backing files...")
+                # message("Cleaning up temporary backing files...")
                 for (f in private$temp_files) {
-                    if (file.exists(f)) {
-                        # Debug
-                        message("Deleting: ", f)
-                    }
-
-                    # Try deleting regardless of file.exists check to be sure
-                    # unlink handles non-existent files gracefully
                     unlink(paste0(f, ".bk"), force = TRUE)
                     unlink(paste0(f, ".rds"), force = TRUE)
-
-                    if (file.exists(paste0(f, ".bk"))) {
-                        warning("Failed to delete .bk file: ", f)
-                    }
                 }
             }
         },
+
 
         # Read CSV/TXT genotypes with robust parsing.
         # @param path Path to file.
