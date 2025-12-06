@@ -434,10 +434,27 @@ HaploObject <- R6::R6Class("HaploObject",
 
                 # If no markers left?
                 if (length(ind_col) == 0) stop("No polymorphic markers left for analysis.")
+
+                # CRITICAL FIX:
+                # If blocks are already defined, dropping markers INVALIDATES block indices.
+                # We must ERROR here to prevent silent data corruption (blocks pointing to wrong regions).
+                if (!is.null(self$blocks)) {
+                    stop(
+                        "Monomorphic markers detected (", n_drop,
+                        ") but blocks are already defined. ",
+                        "Dropping markers now would invalidate block indices. ",
+                        "Please run 'haplo$filter_monomorphic()' BEFORE 'haplo$define_haploblocks()'."
+                    )
+                }
             }
 
             K <- bigstatsr::big_tcrossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = ind_col)
             K <- K[] # Convert to standard matrix
+
+            # CRITICAL FIX: Normalize K by number of markers (P)
+            # This ensures K has diagonal ~ 1 (mean) and lambda is on correct scale.
+            p_sites <- length(ind_col)
+            K <- K / p_sites
 
             # Solve dual: alpha = (K + lambda I)^-1 y
             I <- diag(n)
@@ -1058,7 +1075,7 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @param threshold Significance threshold line (e.g., 0.05 / n_blocks). Default is 0.05 (nominal).
         #' @param main Title of the plot.
         #' @param ... Additional arguments passed to plot().
-        plot_manhattan = function(threshold = 0.05, main = "Manhattan Plot of Haplotype Blocks", ...) {
+        plot_manhattan = function(threshold = 0.05, main = "Manhattan Plot of Haplotype Blocks", type = "manhattan", ...) {
             if (is.null(self$significance)) stop("Significance not calculated. Run test_significance() first.")
 
             df <- self$significance
@@ -1069,19 +1086,50 @@ HaploObject <- R6::R6Class("HaploObject",
             sig_idx <- which(df$P_Value < threshold)
             cols[sig_idx] <- "red" # Highlight significant blocks
 
+            # Determine what to plot based on type
+            if (type == "pve" || type == "PVE") {
+                if ("PVE_Adj" %in% names(df)) {
+                    val <- df$PVE_Adj
+                    ylab_text <- "PVE (Adjusted)"
+                } else {
+                    val <- df$PVE
+                    ylab_text <- "PVE"
+                }
+                main_text <- "Manhattan Plot of Block PVE"
+            } else {
+                # Standard Manhattan (-log10 P)
+                val <- logp
+                ylab_text <- expression(-log[10](italic(p)))
+                main_text <- main
+            }
+
+            # Capture ... args to prevent clash
+            dots <- list(...)
+            # Remove 'type' from dots if it exists (though we captured it as arg, safe redundancy)
+            dots$type <- NULL
+
             # Base R Plot
-            plot(df$BlockID, logp,
+            # We construct the call explicitly to avoid passing 'type' in ...
+            # Actually, plot.default has a 'type' argument (e.g. "p", "l", "h").
+            # The USER passed type="pve" to US, but plot() expects type="h" (histogram/needle).
+            # So we must NOT pass the user's 'type' to plot().
+            # We hardcode type="h" for Manhattan plots.
+
+            do.call(plot, c(list(
+                x = df$BlockID,
+                y = val,
                 type = "h", # Histogram-like vertical lines
                 col = cols,
                 lwd = 1.5,
                 xlab = "Haploblock Index",
-                ylab = expression(-log[10](italic(p))),
-                main = main,
-                ...
-            )
+                ylab = ylab_text,
+                main = main_text
+            ), dots))
 
-            # Add threshold line
-            abline(h = -log10(threshold), col = "blue", lty = 2)
+            # Add threshold line if using P-values
+            if (type != "pve" && type != "PVE") {
+                abline(h = -log10(threshold), col = "blue", lty = 2)
+            }
 
             # Add legend
             legend("topright",
@@ -1094,7 +1142,7 @@ HaploObject <- R6::R6Class("HaploObject",
         #' Plot the Genetic Correlation Heatmap of Top Blocks.
         #' Reconstructs the correlation matrix from latent factors (G = L L') and visualizes it.
         #' @param ... Additional arguments passed to image().
-        plot_factor_heatmap = function(...) {
+        plot_factor_heatmap = function(label_axes = TRUE, ...) {
             if (is.null(private$fa_results)) stop("Factor analysis not run. Run analyze_block_structure() first.")
 
             # Retrieve Loadings
@@ -1117,12 +1165,41 @@ HaploObject <- R6::R6Class("HaploObject",
                 axes = FALSE,
                 xlab = "Block Index",
                 ylab = "Block Index",
-                main = "Latent Genetic Correlations (Factors)",
+                main = "Latent Genetic Correlations",
                 ...
             )
 
+            # Custom Axes
+            if (label_axes) {
+                # Get Block IDs from results
+                block_ids <- private$fa_results$BlockIndices
+
+                # If too many blocks, sparsify labels
+                if (n > 20) {
+                    at_idx <- seq(1, n, floor(n / 20))
+                    labels <- block_ids[at_idx]
+                } else {
+                    at_idx <- 1:n
+                    labels <- block_ids
+                }
+
+                axis(1, at = at_idx, labels = labels, las = 2, cex.axis = 0.8) # X-axis
+                # Y-axis is flipped in image() (1 is bottom)
+                # But we flipped the data t(G)[, n:1]
+                # So row 1 data is at Y-coord n
+                # row n data is at Y-coord 1
+
+                # Correct Y-axis labels
+                # Data index i corresponds to plot coord n - i + 1
+                y_at <- n - at_idx + 1
+                axis(2, at = y_at, labels = labels, las = 2, cex.axis = 0.8)
+            }
+
             # Add box
             box()
+
+            # Add Legend? Simple shim for now
+            # legend("topright", legend=c("+1", "0", "-1"), fill=c("firebrick", "white", "navy"), bty="n")
         },
 
         #' @description
@@ -1477,6 +1554,13 @@ HaploObject <- R6::R6Class("HaploObject",
             if (!endsWith(path, ".rds")) path <- paste0(path, ".rds")
 
             message("Saving project to ", path, "...")
+
+            # CRITICAL: If we are saving the project, we must ensure the backing file
+            # is NOT deleted when this object is finalized.
+            # Remove backing_file from temp_files list.
+            if (length(private$temp_files) > 0) {
+                private$temp_files <- setdiff(private$temp_files, private$backing_file)
+            }
 
             # Save the R6 object
             saveRDS(self, path)

@@ -69,6 +69,15 @@ haplo$plot_manhattan(threshold = 0.05)
 
 The alternating colors (black/grey) indicate different chromosomes (or blocks mapping to them), and the red dashed line indicates the significance threshold.
 
+## PVE Manhattan Plot
+
+In addition to significance, it is often useful to visualize the magnitude of effect. The PVE plot shows the Phenotypic Variance Explained by each block.
+
+```{r manhattan_pve, fig.width=7, fig.height=5}
+# Plot PVE of haplotype blocks
+haplo$plot_manhattan(type = "pve")
+```
+
 ## Local GEBV Heatmap
 
 For a more granular view, the GEBV heatmap visualizes the estimated genetic value of every block for every individual. This allows you to see if specific individuals carry high-value haplotypes in specific regions.
@@ -161,6 +170,15 @@ Finally, we can visualize the relationship between the overall population struct
 haplo$plot_haplo_biplot(top_n = 5, label_blocks = TRUE, highlight_ind = c(1, 10, 30))
 ```
 
--   **Points**: Individuals.
--   **Vectors**: High-variance haploblocks.
 -   **Interpretation**: Length of the vector indicates how strongly that block differentiates the population. Direction indicates which individuals have high effects for that block.
+
+# 7. Latent Factor Analysis (Haplo-FA)
+
+For complex traits, multiple genomic blocks may vary together due to shared ancestry or selection. `HaploGeno` can perform internal Factor Analysis on the Local GEBVs to identify latent drivers of variance.
+
+```{r factor_heatmap, fig.width=6, fig.height=6}
+# Visualize the genetic correlation structure implied by the top latent factors
+haplo$plot_factor_heatmap()
+```
+
+This heatmap shows the correlations between high-variance blocks. Strong clusters indicate blocks that tend to be co-inherited or are structurally linked.

@@ -4,7 +4,7 @@ library(bigstatsr)
 set.seed(42)
 
 # Parameters
-n <- 50
+n <- 100
 m <- 500
 out_dir <- "inst/extdata"
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
@@ -44,15 +44,24 @@ haplo$load_pheno(y)
 # Process
 message("Running pipeline...")
 haplo$filter_monomorphic()
-haplo$define_blocks_ld(r2_threshold = 0.5, window_size = 50)
+haplo$define_haploblocks(method = "ld", r2_threshold = 0.5, window_size = 50)
 haplo$encode_haplotypes()
 haplo$compute_hrm()
 haplo$estimate_marker_effects()
 haplo$calculate_local_gebv()
 haplo$test_significance()
+haplo$calculate_pve(adjust = TRUE)
+haplo$analyze_block_structure(top_n = 20, factors = 2)
 
 # Save
 message("Saving project...")
 haplo$save_project(file.path(out_dir, "demo_data.rds"))
+
+message("Current WD: ", getwd())
+abs_path <- normalizePath(file.path(out_dir, "demo_data.rds"))
+message("Absolute path: ", abs_path)
+message("File exists check: ", file.exists(abs_path))
+message("Directory listing of inst/extdata:")
+print(list.files(out_dir))
 
 message("Done!")
