@@ -17,6 +17,8 @@ HaploObject Class
 
 \item{\code{pheno}}{Vector of phenotypes.}
 
+\item{\code{sample_ids}}{Vector of sample IDs.}
+
 \item{\code{blocks}}{Data.table defining haplotype blocks.}
 
 \item{\code{haplo_mat}}{Matrix of encoded haplotypes.}
@@ -47,7 +49,12 @@ HaploObject Class
 \item \href{#method-HaploObject-estimate_marker_effects}{\code{HaploObject$estimate_marker_effects()}}
 \item \href{#method-HaploObject-encode_haplotypes}{\code{HaploObject$encode_haplotypes()}}
 \item \href{#method-HaploObject-calculate_local_gebv}{\code{HaploObject$calculate_local_gebv()}}
+\item \href{#method-HaploObject-get_block_markers}{\code{HaploObject$get_block_markers()}}
 \item \href{#method-HaploObject-test_significance}{\code{HaploObject$test_significance()}}
+\item \href{#method-HaploObject-calculate_pve}{\code{HaploObject$calculate_pve()}}
+\item \href{#method-HaploObject-analyze_block_structure}{\code{HaploObject$analyze_block_structure()}}
+\item \href{#method-HaploObject-get_model_correlation}{\code{HaploObject$get_model_correlation()}}
+\item \href{#method-HaploObject-analyze_structural_drivers}{\code{HaploObject$analyze_structural_drivers()}}
 \item \href{#method-HaploObject-compute_hrm}{\code{HaploObject$compute_hrm()}}
 \item \href{#method-HaploObject-fit_krr}{\code{HaploObject$fit_krr()}}
 \item \href{#method-HaploObject-cross_validate}{\code{HaploObject$cross_validate()}}
@@ -62,6 +69,13 @@ HaploObject Class
 \item \href{#method-HaploObject-save_project}{\code{HaploObject$save_project()}}
 \item \href{#method-HaploObject-scale_haplo_effects}{\code{HaploObject$scale_haplo_effects()}}
 \item \href{#method-HaploObject-analyze_hoi}{\code{HaploObject$analyze_hoi()}}
+\item \href{#method-HaploObject-plot_haplo_biplot}{\code{HaploObject$plot_haplo_biplot()}}
+\item \href{#method-HaploObject-plot_fa_genome}{\code{HaploObject$plot_fa_genome()}}
+\item \href{#method-HaploObject-plot_communality}{\code{HaploObject$plot_communality()}}
+\item \href{#method-HaploObject-plot_scree}{\code{HaploObject$plot_scree()}}
+\item \href{#method-HaploObject-plot_hoi_distribution}{\code{HaploObject$plot_hoi_distribution()}}
+\item \href{#method-HaploObject-get_haplo_extremes}{\code{HaploObject$get_haplo_extremes()}}
+\item \href{#method-HaploObject-plot_haplo_profile}{\code{HaploObject$plot_haplo_profile()}}
 \item \href{#method-HaploObject-clone}{\code{HaploObject$clone()}}
 }
 }
@@ -256,6 +270,23 @@ Calculate local GEBVs.
 }
 }
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-get_block_markers"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-get_block_markers}{}}}
+\subsection{Method \code{get_block_markers()}}{
+Get marker names for a specific block.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$get_block_markers(block_id)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{block_id}}{Integer ID of the block.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HaploObject-test_significance"></a>}}
 \if{latex}{\out{\hypertarget{method-HaploObject-test_significance}{}}}
 \subsection{Method \code{test_significance()}}{
@@ -266,6 +297,68 @@ Test significance of local GEBVs.
 
 \subsection{Returns}{
 Data.table of p-values.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-calculate_pve"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-calculate_pve}{}}}
+\subsection{Method \code{calculate_pve()}}{
+Calculate Percent Variance Explained (PVE) by each block.
+Computes r^2 between local GEBVs and phenotypes.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$calculate_pve()}\if{html}{\out{</div>}}
+}
+
+\subsection{Returns}{
+Updated significance table.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-analyze_block_structure"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-analyze_block_structure}{}}}
+\subsection{Method \code{analyze_block_structure()}}{
+Analyze block structure using internal Factor Analysis (Latent Regression).
+Models Local GEBVs as function of latent genomic gradients.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$analyze_block_structure(top_n = 500, factors = 2)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{top_n}}{Number of top variance blocks to use.}
+
+\item{\code{factors}}{Number of latent factors to extract.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-get_model_correlation"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-get_model_correlation}{}}}
+\subsection{Method \code{get_model_correlation()}}{
+Reconstruct model-implied correlation matrix from FA results.
+G_smooth = Loadings %*% t(Loadings) + diag(SpecificVar)
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$get_model_correlation()}\if{html}{\out{</div>}}
+}
+
+\subsection{Returns}{
+Implied correlation matrix (N_blocks x N_blocks subset)
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-analyze_structural_drivers"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-analyze_structural_drivers}{}}}
+\subsection{Method \code{analyze_structural_drivers()}}{
+Analyze structural drivers of factor loadings.
+Regresses Communality ~ Variance + Position.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$analyze_structural_drivers()}\if{html}{\out{</div>}}
+}
+
+\subsection{Returns}{
+A summary of the linear model.
 }
 }
 \if{html}{\out{<hr>}}
@@ -521,6 +614,143 @@ Identifies superior haplotypes at a specific block by analyzing distribution.
 }
 \subsection{Returns}{
 A list containing peak values, p-value, HOI haplotypes, and stats.
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_haplo_biplot"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_haplo_biplot}{}}}
+\subsection{Method \code{plot_haplo_biplot()}}{
+Generate a Genomic Architecture Biplot.
+Plots individuals based on HRM PCA and overlays vectors for high-variance haploblocks.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_haplo_biplot(
+  top_n = 10,
+  groups = NULL,
+  scale_vectors = NULL,
+  label_blocks = TRUE,
+  highlight_ind = NULL
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{top_n}}{Number of high-variance blocks to display as vectors.}
+
+\item{\code{groups}}{Optional vector of groups for coloring individuals.}
+
+\item{\code{scale_vectors}}{Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.}
+
+\item{\code{label_blocks}}{Boolean, whether to label the block vectors with their IDs.}
+
+\item{\code{highlight_ind}}{Optional. Vector of sample names or indices to highlight.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_fa_genome"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_fa_genome}{}}}
+\subsection{Method \code{plot_fa_genome()}}{
+Plot Factor Analysis Results (Stacked Manhattan Plots).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_fa_genome(factors = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{factors}}{Vector of factor indices to plot (default: all).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_communality"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_communality}{}}}
+\subsection{Method \code{plot_communality()}}{
+Plot Communality vs Position.
+Visualizes structural drivers (e.g. centromeres).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_communality()}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_scree"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_scree}{}}}
+\subsection{Method \code{plot_scree()}}{
+Plot Scree Plot of Factor Analysis.
+Shows % variance explaining by each factor or singular value.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_scree()}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_hoi_distribution"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_hoi_distribution}{}}}
+\subsection{Method \code{plot_hoi_distribution()}}{
+Plot HOI Effect Distribution with Checks.
+Visualizes the distribution of scaled effects for a block and key check genotypes.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_hoi_distribution(block_id, highlight_ind = NULL)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{block_id}}{Integer. The ID of the block to visualize.}
+
+\item{\code{highlight_ind}}{Optional. Vector of sample names or indices to highlight as checks.}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-get_haplo_extremes"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-get_haplo_extremes}{}}}
+\subsection{Method \code{get_haplo_extremes()}}{
+Identify Extreme Haplotypes.
+Returns lists of genotypes carrying the highest and lowest effect haplotypes for top blocks.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$get_haplo_extremes(top_n = 10, threshold = 1)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{top_n}}{Number of blocks to analyze (ranked by variance).}
+
+\item{\code{threshold}}{Standard Deviation threshold for selection (default 1.0).}
+}
+\if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_haplo_profile"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_haplo_profile}{}}}
+\subsection{Method \code{plot_haplo_profile()}}{
+Plot Haplotype Profile (Mosaic Heatmap).
+Visualizes the "genetic formula" of selected lines across top blocks.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_haplo_profile(
+  genotypes = NULL,
+  top_n_blocks = 20,
+  sort_by = "pheno"
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{genotypes}}{Optional vector of sample IDs to plot. If NULL, plots all (or top N by phenotype).}
+
+\item{\code{top_n_blocks}}{Number of top variance blocks to visualize.}
+
+\item{\code{sort_by}}{Sorting criteria for genotypes: "pheno" (default), "pc1", "none".}
+}
+\if{html}{\out{</div>}}
 }
 }
 \if{html}{\out{<hr>}}

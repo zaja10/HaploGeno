@@ -1456,14 +1456,7 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
         #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
         #' @param highlight_ind Optional. Vector of sample names or indices to highlight.
-        #' @description
-        #' Generate a Genomic Architecture Biplot (Base R).
-        #' Plots individuals based on HRM PCA and overlays vectors for high-variance haploblocks.
-        #' @param top_n Number of high-variance blocks to display as vectors.
-        #' @param groups Optional vector of groups for coloring individuals.
-        #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
-        #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
-        #' @param highlight_ind Optional. Vector of sample names or indices to highlight.
+
         plot_haplo_biplot = function(top_n = 10, groups = NULL, scale_vectors = NULL, label_blocks = TRUE, highlight_ind = NULL) {
             # 1. Validation
             if (is.null(self$hrm)) stop("HRM not computed. Run compute_hrm() first.")
@@ -1789,17 +1782,176 @@ HaploObject <- R6::R6Class("HaploObject",
             }
 
             invisible(hoi_res)
+        },
+
+        #' @description
+        #' Identify Extreme Haplotypes.
+        #' Returns lists of genotypes carrying the highest and lowest effect haplotypes for top blocks.
+        #' @param top_n Number of blocks to analyze (ranked by variance).
+        #' @param threshold Standard Deviation threshold for selection (default 1.0).
+        get_haplo_extremes = function(top_n = 10, threshold = 1.0) {
+            if (is.null(self$significance)) stop("Significance not calculated. Run test_significance() first.")
+            if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
+
+            # Get top blocks
+            top_blocks_idx <- order(self$significance$Variance, decreasing = TRUE)[1:top_n]
+            top_blocks_ids <- self$significance$BlockID[top_blocks_idx]
+
+            local_gebv_mat <- if (is.list(self$local_gebv) && "matrix" %in% names(self$local_gebv)) self$local_gebv$matrix else self$local_gebv
+
+            results <- list()
+
+            for (i in seq_along(top_blocks_idx)) {
+                blk_idx <- top_blocks_idx[i]
+                blk_id <- top_blocks_ids[i]
+
+                vals <- local_gebv_mat[, blk_idx]
+                mu <- mean(vals, na.rm = TRUE)
+                sigma <- sd(vals, na.rm = TRUE)
+
+                # Identify extremes
+                pos_idx <- which(vals > (mu + threshold * sigma))
+                neg_idx <- which(vals < (mu - threshold * sigma))
+
+                # Get IDs
+                pos_ids <- if (!is.null(names(pos_idx))) names(pos_idx) else if (!is.null(self$sample_ids)) self$sample_ids[pos_idx] else pos_idx
+                neg_ids <- if (!is.null(names(neg_idx))) names(neg_idx) else if (!is.null(self$sample_ids)) self$sample_ids[neg_idx] else neg_idx
+
+                results[[paste0("Block_", blk_id)]] <- list(
+                    BlockID = blk_id,
+                    Positive = pos_ids,
+                    Negative = neg_ids,
+                    Mean = mu,
+                    SD = sigma
+                )
+            }
+
+            return(results)
+        },
+
+        #' @description
+        #' Plot Haplotype Profile (Mosaic Heatmap).
+        #' Visualizes the "genetic formula" of selected lines across top blocks.
+        #' @param genotypes Optional vector of sample IDs to plot. If NULL, plots all (or top N by phenotype).
+        #' @param top_n_blocks Number of top variance blocks to visualize.
+        #' @param sort_by Sorting criteria for genotypes: "pheno" (default), "pc1", "none".
+        plot_haplo_profile = function(genotypes = NULL, top_n_blocks = 20, sort_by = "pheno") {
+            if (is.null(self$significance)) stop("Significance not calculated.")
+            if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
+
+            # 1. Select Blocks
+            # Sort by Variance to get significance, then re-sort by BlockID (Position) for plotting
+            top_var_idx <- order(self$significance$Variance, decreasing = TRUE)[1:top_n_blocks]
+            # Order these by BlockID to respect genomic position
+            sorted_block_indices <- top_var_idx[order(top_var_idx)]
+            block_ids <- self$significance$BlockID[sorted_block_indices]
+
+            # 2. Get Data
+            local_gebv_mat <- if (is.list(self$local_gebv) && "matrix" %in% names(self$local_gebv)) self$local_gebv$matrix else self$local_gebv
+            mat <- local_gebv_mat[, sorted_block_indices, drop = FALSE]
+            colnames(mat) <- paste0("B", block_ids)
+
+            # 3. Filter Genotypes
+            check_ids <- NULL
+            if (!is.null(genotypes)) {
+                # Match logic
+                if (is.character(genotypes)) {
+                    if (!is.null(self$sample_ids)) {
+                        idx <- match(genotypes, self$sample_ids)
+                        mat <- mat[idx, , drop = FALSE]
+                        # check_ids <- genotypes
+                    } else if (!is.null(rownames(mat))) {
+                        mat <- mat[genotypes, , drop = FALSE]
+                    }
+                } else if (is.numeric(genotypes)) {
+                    mat <- mat[genotypes, , drop = FALSE]
+                }
+            } else {
+                # If too many lines, maybe warn or subset?
+                # For now, plot all unless specified
+            }
+
+            # 4. Sort Genotypes
+            if (sort_by == "pheno" && !is.null(self$pheno)) {
+                # Need to match pheno to current mat rows
+                # Assuming mat rows correspond to self$pheno indices if no subsetting was done drastically wrong
+                # If we subsetted by name, we need to find corresponding pheno values.
+                # This is tricky without explicit ID mapping locally.
+                # Assuming simple 1:1 mapping for now or using indices.
+
+                # If subsetted, we need original indices
+                # Let's assume full matrix first then subset
+                current_n <- nrow(mat)
+                # We need an ordering vector
+                # If full matrix:
+                if (is.null(genotypes) || length(genotypes) == nrow(local_gebv_mat)) {
+                    ord <- order(self$pheno, decreasing = TRUE)
+                    mat <- mat[ord, , drop = FALSE]
+                }
+            } else if (sort_by == "pc1") {
+                pc <- prcomp(mat, scale. = TRUE)
+                ord <- order(pc$x[, 1], decreasing = TRUE)
+                mat <- mat[ord, , drop = FALSE]
+            }
+
+            # 5. Plotting (Base R Image)
+            # image() expects x, y, z.
+            # We want Genotypes on Y, Blocks on X.
+            # Scale for visualization
+            mat_scaled <- scale(mat)
+            mat_scaled[mat_scaled > 3] <- 3
+            mat_scaled[mat_scaled < -3] <- -3
+
+            # Color Palette (Red-Yellow-Green)
+            # Use a diverging palette
+            n_cols <- 100
+            # Simple RYG
+            cols <- colorRampPalette(c("red", "white", "darkgreen"))(n_cols)
+
+            # image() draws (0,0) at bottom left.
+            # Matrix is rows=inds, cols=blocks.
+            # image(t(mat)) puts Rows on X, Cols on Y.
+            # Be careful with rotation.
+
+            # Let's display Genotypes on Y (top to bottom) -> reverse Y
+            # Blocks on X (left to right) -> normal X
+
+            # Transpose for image(): x=blocks, y=genotypes
+            z <- t(mat_scaled)
+            # Reverse columns of z to reverse Y axis (genotypes top to bottom)
+            z <- z[, seq(ncol(z), 1, -1)]
+
+            x_labs <- colnames(mat)
+            y_labs <- if (!is.null(rownames(mat))) rownames(mat) else paste0("I", 1:nrow(mat))
+            # Reverse y_labs matching the data reversal
+            y_labs <- rev(y_labs)
+
+            # Main Plot
+            image(1:ncol(mat), 1:nrow(mat), z,
+                axes = FALSE, xlab = "Haploblocks (Position)", ylab = "Genotypes",
+                col = cols, main = "Haplotype Mosaic Profile"
+            )
+
+            # Axes
+            axis(1, at = 1:ncol(mat), labels = x_labs, las = 2, cex.axis = 0.7)
+            # Only label Y if reasonable number
+            if (nrow(mat) <= 50) {
+                axis(2, at = 1:nrow(mat), labels = y_labs, las = 1, cex.axis = 0.6)
+            } else {
+                # Add just a few markers or none
+                mtext("Top (Ordered)", side = 2, at = nrow(mat))
+                mtext("Bottom", side = 2, at = 1)
+            }
         }
     ),
     private = list(
-        #' @field backing_file Path to backing file.
+        # @field backing_file Path to backing file.
         backing_file = NULL,
-        #' @field fa_results List to store Factor Analysis results.
+        # @field fa_results List to store Factor Analysis results.
         fa_results = NULL,
 
-        #' @description
-        #' Read CSV/TXT genotypes with robust parsing.
-        #' @param path Path to file.
+        # Read CSV/TXT genotypes with robust parsing.
+        # @param path Path to file.
         read_csv_genotypes = function(path) {
             message("Reading genotypes from ", path, "...")
 
