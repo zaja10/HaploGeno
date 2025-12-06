@@ -16,6 +16,8 @@ HaploObject <- R6::R6Class("HaploObject",
         map = NULL,
         #' @field pheno Vector of phenotypes.
         pheno = NULL,
+        #' @field sample_ids Vector of sample IDs.
+        sample_ids = NULL,
         #' @field blocks Data.table defining haplotype blocks.
         blocks = NULL,
         #' @field haplo_mat Matrix of encoded haplotypes.
@@ -79,6 +81,9 @@ HaploObject <- R6::R6Class("HaploObject",
                 # Currently, we default to creating a new backing file for each session to ensure data integrity.
                 # Convert to FBM
                 # We enforce type = "double" to ensure compatibility with downstream linear algebra operations (big_cor, big_scale).
+                if (!is.null(rownames(matrix_or_path))) {
+                    self$sample_ids <- rownames(matrix_or_path)
+                }
                 self$geno <- bigstatsr::as_FBM(matrix_or_path,
                     type = "double",
                     backingfile = private$backing_file
@@ -115,6 +120,7 @@ HaploObject <- R6::R6Class("HaploObject",
                     obj <- bigsnpr::snp_attach(matrix_or_path)
                     if (inherits(obj, "bigSNP")) {
                         self$geno <- obj$genotypes
+                        if (!is.null(obj$fam$sample.ID)) self$sample_ids <- obj$fam$sample.ID
                     } else {
                         if (file.exists(paste0(matrix_or_path, ".bk"))) {
                             self$geno <- bigstatsr::big_attach(paste0(matrix_or_path, ".rds"))
@@ -482,27 +488,21 @@ HaploObject <- R6::R6Class("HaploObject",
 
                     # Handle active_markers (subsetting)
                     if (!is.null(self$active_markers)) {
-                        # Identify which markers in this block are active
-                        valid_idx_in_block <- which(indices %in% self$active_markers)
+                        # Logic Update: Treat start/end as relative indices into active_markers
+                        # indices (start:end) are relative to the active_markers vector
 
-                        if (length(valid_idx_in_block) == 0) {
-                            # No active markers in this block
-                            # Return zeros
-                            n_ind <- nrow(self$geno)
-                            return(list(gebv = rep(0, n_ind), var = 0))
-                        }
+                        # Indices in active_markers vector
+                        rel_indices <- indices
 
-                        # Get absolute indices of active markers in this block
-                        abs_indices <- indices[valid_idx_in_block]
+                        # Map to absolute columns in genotype matrix
+                        abs_indices <- self$active_markers[rel_indices]
 
-                        # Find their position in the active_markers vector (to index effects/stats)
-                        rel_indices <- match(abs_indices, self$active_markers)
-
+                        # Marker effects and stats are indexed by relative position (1..N_active)
                         u_block <- self$marker_effects[rel_indices]
                         mus <- centers_all[rel_indices]
                         sigmas <- scales_all[rel_indices]
 
-                        # Indices for big_prodVec must be absolute
+                        # big_prodVec needs absolute column indices
                         real_indices <- abs_indices
                     } else {
                         # All markers active
@@ -526,12 +526,39 @@ HaploObject <- R6::R6Class("HaploObject",
             local_gebvs <- do.call(cbind, lapply(results, function(x) x$gebv))
             variances <- unlist(lapply(results, function(x) x$var))
 
+            if (!is.null(self$sample_ids)) {
+                rownames(local_gebvs) <- self$sample_ids
+            }
+
             self$local_gebv <- list(
                 matrix = local_gebvs,
                 variances = variances
             )
 
             message("Local GEBV calculation complete.")
+        },
+        #' @description
+        #' Get marker names for a specific block.
+        #' @param block_id Integer ID of the block.
+        get_block_markers = function(block_id) {
+            if (is.null(self$blocks)) stop("Blocks not defined.")
+            if (block_id < 1 || block_id > nrow(self$blocks)) stop("Invalid block ID.")
+
+            start <- self$blocks$Start[block_id]
+            end <- self$blocks$End[block_id]
+            indices <- start:end
+
+            if (!is.null(self$active_markers)) {
+                abs_indices <- self$active_markers[indices]
+            } else {
+                abs_indices <- indices
+            }
+
+            if (!is.null(self$map) && "id" %in% names(self$map)) {
+                return(self$map$id[abs_indices])
+            } else {
+                return(paste0("Marker_", abs_indices))
+            }
         },
         #' @description
         #' Test significance of local GEBVs.
@@ -591,6 +618,178 @@ HaploObject <- R6::R6Class("HaploObject",
             )
 
             return(self$significance)
+        },
+        #' @description
+        #' Calculate Percent Variance Explained (PVE) by each block.
+        #' Computes r^2 between local GEBVs and phenotypes.
+        #' @return Updated significance table.
+        calculate_pve = function() {
+            if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
+            if (is.null(self$pheno)) stop("Phenotypes not loaded.")
+
+            message("Calculating Phenotypic Variance Explained (PVE)...")
+
+            # cor() is fast and base R, handle missing values with use="pairwise"
+            # local_gebv$matrix is N x M, pheno is N x 1
+            # We want correlation of each block (column) with pheno
+
+            # Ensure pheno is vector
+            y <- as.vector(self$pheno)
+
+            # Only compute for available data
+            valid_idx <- which(!is.na(y))
+            if (length(valid_idx) < length(y)) {
+                warning("Phenotypes contain NAs. Using pairwise deletion for correlation.")
+                y <- y[valid_idx]
+                X <- self$local_gebv$matrix[valid_idx, , drop = FALSE]
+            } else {
+                X <- self$local_gebv$matrix
+            }
+
+            cor_vals <- cor(X, y)
+            r2 <- as.vector(cor_vals^2)
+
+            # Update significance table
+            if (is.null(self$significance)) {
+                # If significance table doesn't exist, create partial one
+                self$test_significance()
+            }
+
+            self$significance$PVE <- r2
+            return(self$significance)
+        },
+        #' @description
+        #' Analyze block structure using internal Factor Analysis (Latent Regression).
+        #' Models Local GEBVs as function of latent genomic gradients.
+        #' @param top_n Number of top variance blocks to use.
+        #' @param factors Number of latent factors to extract.
+        analyze_block_structure = function(top_n = 500, factors = 2) {
+            if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
+
+            message("Running Haplo-FA (Internal Factor Analysis) on top ", top_n, " blocks...")
+
+            # 1. Select top blocks by variance
+            # If significance table exists, use that. Else calculate variances.
+            if (!is.null(self$significance)) {
+                vars <- self$significance$Variance
+            } else {
+                vars <- apply(self$local_gebv$matrix, 2, var)
+            }
+
+            # Handle NAs in variance (shouldn't happen but be safe)
+            vars[is.na(vars)] <- 0
+
+            n_blocks <- length(vars)
+            effective_n <- min(top_n, n_blocks)
+
+            # Indices of top blocks
+            top_indices <- order(vars, decreasing = TRUE)[1:effective_n]
+
+            # Subset GEBV matrix
+            X <- self$local_gebv$matrix[, top_indices, drop = FALSE]
+
+            # 2. Scale (Z-score)
+            X_scaled <- scale(X)
+            # Remove columns with zero variance (if any slipped through)
+            valid_cols <- which(attr(X_scaled, "scaled:scale") > 1e-10)
+            if (length(valid_cols) < factors) stop("Not enough valid blocks for Factor Analysis.")
+
+            X_scaled <- X_scaled[, valid_cols, drop = FALSE]
+            final_indices <- top_indices[valid_cols]
+
+            # 3. SVD for Factor Extraction
+            # We want Factor Analysis, can approximate with PCA (SVD on correlation matrix)
+            # Or SVD on data matrix directly.
+            # X_scaled = U D V'.
+            # Loadings = V * D / sqrt(N-1). Scores = U * sqrt(N-1)
+
+            s <- svd(X_scaled)
+
+            # Limit to 'factors' dimensions
+            U <- s$u[, 1:factors, drop = FALSE]
+            D <- diag(s$d[1:factors], nrow = factors, ncol = factors)
+            V <- s$v[, 1:factors, drop = FALSE]
+
+            # Initial (Unrotated) Loadings and Scores
+            # Loadings: Correlation between Item (Block) and Factor
+            # L = V %*% D / sqrt(nrow(X)-1)
+            scale_factor <- sqrt(nrow(X_scaled) - 1)
+            L_unrotated <- V %*% D / scale_factor
+
+            # 4. Varimax Rotation
+            # Improves interpretability (simple structure)
+            vm <- varimax(L_unrotated)
+            L_rotated <- vm$loadings # This is class 'loadings', behaves like matrix
+            # Convert to matrix strictly
+            L_rotated <- matrix(as.numeric(L_rotated), nrow = nrow(L_rotated), ncol = ncol(L_rotated))
+
+            # Rotated Scores = X_scaled %*% L_rotated %*% solve(t(L_rotated) %*% L_rotated) ?
+            # Or easier: Scores = X_scaled %*% solve(Correlation) %*% L_rotated (Regression method)
+            # For approximate component scores:
+            # Rot = vm$rotmat
+            # Scores_rotated = Scores_unrotated %*% Rot
+            S_unrotated <- U * scale_factor # = X_scaled %*% V (if standardized)
+            S_rotated <- S_unrotated %*% vm$rotmat
+
+            colnames(L_rotated) <- paste0("Factor", 1:factors)
+            colnames(S_rotated) <- paste0("Factor", 1:factors)
+
+            # 5. Communality and Specific Variance
+            # h2 = sum of squared loadings
+            h2 <- rowSums(L_rotated^2)
+            u2 <- 1 - h2 # Unique variance / Specific variance
+
+            # Store Results
+            private$fa_results <- list(
+                Loadings = L_rotated,
+                Scores = S_rotated,
+                Communality = h2,
+                SpecificVar = u2,
+                BlockIndices = final_indices,
+                Rotation = vm$rotmat,
+                Pos = (self$blocks$Start[final_indices] + self$blocks$End[final_indices]) / 2
+            )
+
+            message("Factor Analysis complete. Retained ", factors, " factors.")
+        },
+        #' @description
+        #' Reconstruct model-implied correlation matrix from FA results.
+        #' G_smooth = Loadings %*% t(Loadings) + diag(SpecificVar)
+        #' @return Implied correlation matrix (N_blocks x N_blocks subset)
+        get_model_correlation = function() {
+            if (is.null(private$fa_results)) stop("Run analyze_block_structure() first.")
+
+            L <- private$fa_results$Loadings
+            u2 <- private$fa_results$SpecificVar
+
+            G_smooth <- tcrossprod(L)
+            diag(G_smooth) <- diag(G_smooth) + u2
+
+            return(G_smooth)
+        },
+        #' @description
+        #' Analyze structural drivers of factor loadings.
+        #' Regresses Communality ~ Variance + Position.
+        #' @return A summary of the linear model.
+        analyze_structural_drivers = function() {
+            if (is.null(private$fa_results)) stop("Run analyze_block_structure() first.")
+            if (is.null(self$significance)) stop("Significance/Variance table not found.")
+
+            idx <- private$fa_results$BlockIndices
+
+            # Build dataframe
+            df <- data.frame(
+                Comm = private$fa_results$Communality,
+                # Safe access to variances
+                Var = self$significance$Variance[idx],
+                # Position (already stored in fa_results)
+                Pos = private$fa_results$Pos
+            )
+
+            message("Testing structural drivers (Communality ~ Variance + Position)...")
+            m1 <- lm(Comm ~ Var + Pos, data = df)
+
+            return(summary(m1))
         },
         #' @description
         #' Compute Haplotype Relationship Matrix.
@@ -1257,6 +1456,14 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
         #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
         #' @param highlight_ind Optional. Vector of sample names or indices to highlight.
+        #' @description
+        #' Generate a Genomic Architecture Biplot (Base R).
+        #' Plots individuals based on HRM PCA and overlays vectors for high-variance haploblocks.
+        #' @param top_n Number of high-variance blocks to display as vectors.
+        #' @param groups Optional vector of groups for coloring individuals.
+        #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
+        #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
+        #' @param highlight_ind Optional. Vector of sample names or indices to highlight.
         plot_haplo_biplot = function(top_n = 10, groups = NULL, scale_vectors = NULL, label_blocks = TRUE, highlight_ind = NULL) {
             # 1. Validation
             if (is.null(self$hrm)) stop("HRM not computed. Run compute_hrm() first.")
@@ -1266,16 +1473,15 @@ HaploObject <- R6::R6Class("HaploObject",
             # 2. Get PC Scores (Individuals)
             message("Calculating PCA of Centered HRM...")
 
-            # Double Center the HRM: K_centered = (I - 1/n J) K (I - 1/n J)
-            # Efficiently: Kc = K - rowMeans(K) - colMeans(K) + mean(K)
+            # Helper to get centered HRM
             K <- self$hrm
             n <- nrow(K)
             row_means <- rowMeans(K)
             mean_K <- mean(K)
 
-            # Use sweep for broadcasting subtract
+            # Use sweep for broadcasting subtract; K_centered = (I - 1/n J) K (I - 1/n J)
             Kc <- sweep(K, 1, row_means, "-")
-            Kc <- sweep(Kc, 2, row_means, "-") # Since K is symmetric, rowMeans == colMeans
+            Kc <- sweep(Kc, 2, row_means, "-")
             Kc <- Kc + mean_K
 
             eig <- eigen(Kc, symmetric = TRUE)
@@ -1286,22 +1492,22 @@ HaploObject <- R6::R6Class("HaploObject",
 
             # Calculate variance explained
             var_expl <- eig$values / sum(eig$values) * 100
-            # Ensure no negative variances due to numerical error (though Kc is PSD if K is)
-            var_expl <- pmax(var_expl, 0)
+            var_expl <- pmax(var_expl, 0) # Safety
 
             lab_x <- paste0("PC1 (", round(var_expl[1], 1), "%)")
             lab_y <- paste0("PC2 (", round(var_expl[2], 1), "%)")
 
-            # 3. Get Top Blocks (Loadings)
+            # 3. Loadings from Top Blocks
+            # If fa_results exists, maybe use those? Protocol says "Top Variance Blocks" for biplot.
+
             # Sort blocks by Variance
             top_blocks_idx <- order(self$significance$Variance, decreasing = TRUE)[1:top_n]
             top_blocks_ids <- self$significance$BlockID[top_blocks_idx]
 
-            # Extract Local GEBVs for these blocks
             local_gebv_mat <- if (is.list(self$local_gebv) && "matrix" %in% names(self$local_gebv)) self$local_gebv$matrix else self$local_gebv
             sel_gebvs <- local_gebv_mat[, top_blocks_idx, drop = FALSE]
 
-            # Calculate correlations (Loadings) between Local GEBVs and PCs
+            # Correlation with PC scores
             loadings <- data.frame(
                 BlockID = top_blocks_ids,
                 v1 = cor(sel_gebvs, pc_scores$PC1),
@@ -1313,9 +1519,8 @@ HaploObject <- R6::R6Class("HaploObject",
             max_load <- max(abs(c(loadings$v1, loadings$v2)))
 
             if (is.null(scale_vectors)) {
-                # Handle case where max_load is 0 or NA
                 if (is.na(max_load) || max_load == 0) max_load <- 1
-                scaling_factor <- max_pc / max_load * 0.8 # 80% of plot radius
+                scaling_factor <- max_pc / max_load * 0.8
             } else {
                 scaling_factor <- scale_vectors
             }
@@ -1323,89 +1528,179 @@ HaploObject <- R6::R6Class("HaploObject",
             loadings$v1 <- loadings$v1 * scaling_factor
             loadings$v2 <- loadings$v2 * scaling_factor
 
-            # 5. Plotting with Base R
-            # Add grouping if provided
+            # 5. Plotting
+            # Setup colors
             if (is.null(groups)) {
-                pt_col <- rgb(0, 0, 0, 0.3) # Semi-transparent black default
+                pt_col <- rgb(0, 0, 0, 0.3)
                 pt_pch <- 16
             } else {
-                if (length(groups) != nrow(self$hrm)) {
-                    warning("Length of groups does not match n_samples. Ignoring.")
+                if (length(groups) != n) {
+                    warning("Length of groups does not match n_samples.")
                     pt_col <- rgb(0, 0, 0, 0.3)
                     pt_pch <- 16
                 } else {
                     u_groups <- unique(groups)
-                    palette <- rainbow(length(u_groups))
-                    pt_col <- palette[match(groups, u_groups)]
+                    # Simple color palette logic
+                    pal <- c("red", "blue", "green", "orange", "purple", "cyan", "brown")
+                    if (length(u_groups) > length(pal)) pal <- rainbow(length(u_groups))
+                    pt_col <- pal[match(groups, u_groups)]
                     pt_pch <- 16
                 }
             }
 
-            # Setup empty plot
             x_lim <- range(c(pc_scores$PC1, loadings$v1), na.rm = TRUE)
             y_lim <- range(c(pc_scores$PC2, loadings$v2), na.rm = TRUE)
 
-            # Extend limits
+            # Add margin
             x_lim <- x_lim + c(-1, 1) * diff(x_lim) * 0.1
             y_lim <- y_lim + c(-1, 1) * diff(y_lim) * 0.1
 
             plot(pc_scores$PC1, pc_scores$PC2,
                 xlab = lab_x, ylab = lab_y,
                 main = "Genomic Architecture Biplot",
-                sub = paste("Vectors represent top", top_n, "high-variance haploblocks"),
-                col = pt_col, pch = pt_pch, cex = 1.0,
+                col = pt_col, pch = pt_pch,
                 xlim = x_lim, ylim = y_lim
             )
 
             grid()
             abline(h = 0, v = 0, lty = 2, col = "grey")
 
-            # Plot Vectors
-            arrows(
-                x0 = 0, y0 = 0, x1 = loadings$v1, y1 = loadings$v2,
-                col = "darkred", lwd = 2, length = 0.1
-            )
+            # Vectors
+            arrows(0, 0, loadings$v1, loadings$v2, col = "darkred", lwd = 1.5, length = 0.1)
 
-            # Add labels for blocks
             if (label_blocks) {
-                text(
-                    x = loadings$v1, y = loadings$v2,
-                    labels = paste0("Blk", loadings$BlockID),
-                    pos = 1, col = "darkred", font = 2, cex = 0.8
+                text(loadings$v1, loadings$v2,
+                    labels = paste0("B", loadings$BlockID),
+                    pos = 1, col = "darkred", cex = 0.8
                 )
             }
 
-            # Plot Highlighted Individuals
+            # Highlight checks
             if (!is.null(highlight_ind)) {
-                # Resolve names to indices if possible
-                idx <- highlight_ind
-                labels <- highlight_ind
+                # Simple index matching
+                idx <- NULL
+                lbl <- NULL
 
-                # Check if names are passed but we can't resolve them
-                if (is.character(highlight_ind)) {
-                    # Try to match against pheno name or similar?
-                    # Ideally we should have names on the HRM or passed explicitly.
-                    # For now, if numeric, assume indices.
-                    # If character, warn and skip if no names?
-                    # Let's assume indices are safer as per previous logic.
-                    warning("Using character names for highlighting without named data matching logic might be unstable. Proceeding if they are valid indices or names.")
+                if (is.numeric(highlight_ind)) {
+                    idx <- highlight_ind
+                    lbl <- paste0("C", idx)
+                } else if (is.character(highlight_ind)) {
+                    if (!is.null(self$sample_ids)) {
+                        idx <- match(highlight_ind, self$sample_ids)
+                        lbl <- highlight_ind
+                    } else if (!is.null(rownames(self$hrm))) {
+                        idx <- match(highlight_ind, rownames(self$hrm))
+                        lbl <- highlight_ind
+                    }
                 }
 
-                # subset
-                sel_pc <- pc_scores[idx, , drop = FALSE]
-
-                # Plot points
-                points(sel_pc$PC1, sel_pc$PC2, col = "blue", pch = 17, cex = 1.5)
-                # Plot labels
-                text(sel_pc$PC1, sel_pc$PC2, labels = labels, pos = 3, col = "blue", font = 2, cex = 0.9)
-            }
-
-            # Legend if groups exist
-            if (!is.null(groups)) {
-                legend("topright", legend = u_groups, col = palette, pch = 16, bty = "n", cex = 0.8)
+                if (!is.null(idx)) {
+                    valid <- !is.na(idx)
+                    points(pc_scores$PC1[idx[valid]], pc_scores$PC2[idx[valid]], col = "blue", pch = 17, cex = 1.5)
+                    text(pc_scores$PC1[idx[valid]], pc_scores$PC2[idx[valid]], labels = lbl[valid], pos = 3, col = "blue", font = 2)
+                }
             }
 
             invisible(list(scores = pc_scores, loadings = loadings))
+        },
+        #' @description
+        #' Plot Factor Analysis Results (Stacked Manhattan Plots).
+        #' @param factors Vector of factor indices to plot (default: all).
+        plot_fa_genome = function(factors = NULL) {
+            if (is.null(private$fa_results)) stop("Run analyze_block_structure() first.")
+
+            res <- private$fa_results
+            L <- res$Loadings
+            Pos <- res$Pos
+
+            n_factors <- ncol(L)
+            if (is.null(factors)) factors <- 1:n_factors
+
+            # Setup layout
+            old_par <- par(no.readonly = TRUE)
+            on.exit(par(old_par))
+
+            par(mfrow = c(length(factors), 1), mar = c(2, 4, 2, 1), oma = c(2, 0, 2, 0))
+
+            for (i in factors) {
+                if (i > n_factors) next
+
+                load_vec <- L[, i]
+                # Color positive/negative
+                cols <- ifelse(load_vec > 0, "blue", "red")
+
+                plot(Pos, load_vec,
+                    type = "h", lwd = 1.5, col = cols,
+                    ylim = c(min(L), max(L)),
+                    ylab = paste("Factor", i),
+                    main = "",
+                    xaxt = "n"
+                ) # Suppress x-axis inside stack
+                abline(h = 0)
+
+                # Add simple axis if last
+                if (i == tail(factors, 1)) {
+                    axis(1)
+                    mtext("Genomic Position", side = 1, line = 2.5, cex = 0.8)
+                }
+            }
+            mtext("Latent Genomic Gradients", side = 3, outer = TRUE, line = 0.5, font = 2)
+        },
+        #' @description
+        #' Plot Communality vs Position.
+        #' Visualizes structural drivers (e.g. centromeres).
+        plot_communality = function() {
+            if (is.null(private$fa_results)) stop("Run analyze_block_structure() first.")
+
+            comm <- private$fa_results$Communality
+            pos <- private$fa_results$Pos
+
+            plot(pos, comm,
+                pch = 16, col = rgb(0, 0, 0, 0.4),
+                xlab = "Genomic Position", ylab = "Communality (h2)",
+                main = "Structural Constraint Map"
+            )
+
+            # Smooth trend if enough data and no NAs
+            if (length(pos) > 5 && all(is.finite(pos)) && all(is.finite(comm))) {
+                tryCatch(
+                    {
+                        lines(stats::loess.smooth(pos, comm, span = 0.5), col = "red", lwd = 2)
+                    },
+                    error = function(e) warning("Could not plot smooth trend: ", e$message)
+                )
+            }
+            grid()
+        },
+        #' @description
+        #' Plot Scree Plot of Factor Analysis.
+        #' Shows % variance explaining by each factor or singular value.
+        plot_scree = function() {
+            if (is.null(private$fa_results)) stop("Run analyze_block_structure() first.")
+
+            # We don't have all SVD values stored in fa_results currently,
+            # only the rotated loadings for chosen factors.
+            # Ideally analyze_block_structure should store eigenvalues from SVD.
+            # But we can calculate variance explained by the extracted factors.
+
+            L <- private$fa_results$Loadings
+            # Sum of squared loadings per factor = Variance explained by that factor (after rotation)
+            var_per_factor <- colSums(L^2)
+            # Total variance = Number of items? (Since inputs were standardized)
+            total_var <- nrow(L)
+
+            pve <- var_per_factor / total_var * 100
+
+            # Plot
+            barplot(pve,
+                names.arg = colnames(L),
+                col = "steelblue",
+                ylab = "% Variance Explained",
+                main = "Scree Plot (Extracted Factors)",
+                ylim = c(0, max(pve) * 1.2)
+            )
+
+            text(x = seq_along(pve) * 1.2 - 0.5, y = pve, labels = paste0(round(pve, 1), "%"), pos = 3, cex = 0.8)
         },
 
         #' @description
@@ -1497,7 +1792,10 @@ HaploObject <- R6::R6Class("HaploObject",
         }
     ),
     private = list(
+        #' @field backing_file Path to backing file.
         backing_file = NULL,
+        #' @field fa_results List to store Factor Analysis results.
+        fa_results = NULL,
 
         #' @description
         #' Read CSV/TXT genotypes with robust parsing.
@@ -1514,9 +1812,8 @@ HaploObject <- R6::R6Class("HaploObject",
             if (is.character(first_col) || is.factor(first_col)) {
                 # Check uniqueness
                 if (anyDuplicated(first_col) == 0) {
-                    message("Detected Sample IDs in first column. Using them as row names (if needed) and removing from matrix.")
-                    # We can't easily assign rownames to FBM, but we can store them?
-                    # For now, just drop the column
+                    message("Detected Sample IDs in first column. Capturing as sample_ids.")
+                    self$sample_ids <- first_col
                     dt <- dt[, -1, drop = FALSE]
                 }
             }
