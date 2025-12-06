@@ -104,7 +104,7 @@ Define blocks based on Linkage Disequilibrium (LD). We use a sliding window appr
 
 ```{r blocking}
 # Define blocks with r2 threshold of 0.1
-haplo$define_blocks_ld(r2_threshold = 0.1, window_size = 100)
+haplo$define_haploblocks(method = "ld", r2_threshold = 0.1, window_size = 100)
 
 print(haplo)
 ```
@@ -173,7 +173,7 @@ Save the analysis project for later use. This bundles the R object and ensures t
 haplo$save_project(file.path(tempdir(), "haplo_project.rds"))
 ```
 
-# 9. Factor Analysis & Structure (New)
+# 10. Factor Analysis & Structure (New)
 
 Explore the latent genomic architecture by analyzing the covariance of local GEBVs across blocks.
 
@@ -196,7 +196,7 @@ Visualize the genomic loadings of the extracted latent factors.
 haplo$plot_fa_genome()
 ```
 
-# 10. Selection & Profiling
+# 11. Selection & Profiling
 
 Identify candidate lines for breeding based on specific haplotype combinations.
 
@@ -210,6 +210,6 @@ print(extremes[[1]]) # View results for the top block
 haplo$plot_haplo_profile(top_n_blocks = 20, sort_by = "pheno")
 ```
 
-# 11. Conclusion
+# 12. Conclusion
 
 `HaploGeno` provides a streamlined, high-performance pipeline for haplotype-based analysis, scaling from small test datasets to large genomic studies.

@@ -42,6 +42,14 @@ HaploObject <- R6::R6Class("HaploObject",
             private$backing_file <- backing_file_path
             private$temp_files <- character(0)
         },
+        #' @description
+        #' Finalize the object and clean up temporary files.
+        finalize = function() {
+            if (length(private$temp_files) > 0) {
+                # message("Cleaning up temporary files...")
+                unlink(private$temp_files)
+            }
+        },
 
 
         #' @description
