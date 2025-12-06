@@ -19,7 +19,7 @@ test_that("Statistical Engine works (PVE, FA, Model Corr)", {
     haplo$load_map(map)
 
     # Blocks & Effects
-    haplo$define_blocks_fixed(window_size = 2) # 10 blocks
+    haplo$define_haploblocks(method = "fixed", window_size = 2) # 10 blocks
     # Mock effects to skip estimation
     haplo$marker_effects <- runif(n_markers)
 

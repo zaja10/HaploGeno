@@ -42,7 +42,7 @@ test_that("End-to-end integration with minimal CSV input", {
     expect_equal(length(ho$pheno), n_ind)
 
     # Define Blocks (Fixed)
-    ho$define_blocks_fixed(window_size = 10)
+    ho$define_haploblocks(method = "fixed", window_size = 10)
     expect_true(!is.null(ho$blocks))
 
     # Estimate Effects
@@ -75,7 +75,8 @@ test_that("End-to-end integration with minimal CSV input", {
     # Dummy pheno
     ho2$pheno <- rnorm(10)
 
-    ho2$define_blocks_fixed(5)
+    ho2$filter_monomorphic()
+    ho2$define_haploblocks(method = "fixed", window_size = 5)
     ho2$estimate_marker_effects()
     ho2$calculate_local_gebv()
     expect_error(ho2$test_significance(), NA)

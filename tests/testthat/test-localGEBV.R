@@ -40,7 +40,7 @@ test_that("localGEBV workflow runs correctly", {
   
   # Step 1: LD Blocking
   # Expect roughly m/10 blocks if LD is perfect, but noise might break them
-  haplo$define_blocks_ld(r2_threshold = 0.5, tolerance = 2)
+  haplo$define_haploblocks(method="ld", r2_threshold = 0.5, tolerance = 2)
   expect_true(!is.null(haplo$blocks))
   expect_gt(nrow(haplo$blocks), 1)
   

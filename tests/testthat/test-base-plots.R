@@ -16,7 +16,7 @@ test_that("Base R Visualizations run without error", {
     haplo$load_pheno(rnorm(n_ind))
 
     # Blocks & Effects
-    haplo$define_blocks_fixed(window_size = 5)
+    haplo$define_haploblocks(method="fixed", window_size = 5)
     haplo$marker_effects <- runif(n_markers)
 
     # Compute HRM & GEBV

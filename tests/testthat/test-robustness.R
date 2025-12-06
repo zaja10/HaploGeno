@@ -46,11 +46,11 @@ test_that("Monomorphic markers are filtered", {
     expect_equal(length(haplo$active_markers), 4)
     expect_false(3 %in% haplo$active_markers)
 
-    # Check define_blocks_fixed uses active markers
+    # Check define_haploblocks(method="fixed", uses active markers
     # Mock map
     haplo$map <- data.frame(chr = rep(1, 5), id = paste0("m", 1:5), pos = 1:5, ref = "A", alt = "T")
 
-    haplo$define_blocks_fixed(window_size = 2)
+    haplo$define_haploblocks(method="fixed", window_size = 2)
 
     # Should have 2 blocks (4 markers / 2 = 2 blocks)
     expect_equal(nrow(haplo$blocks), 2)

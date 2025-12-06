@@ -21,7 +21,7 @@ test_that("HaploObject modeling works", {
   haplo$load_map(map)
   
   # Define blocks and encode
-  haplo$define_blocks_fixed(5)
+  haplo$define_haploblocks(method="fixed", 5)
   haplo$encode_haplotypes()
   
   # Simulate phenotype based on haplotypes

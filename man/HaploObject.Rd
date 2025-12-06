@@ -44,8 +44,7 @@ HaploObject Class
 \item \href{#method-HaploObject-load_map}{\code{HaploObject$load_map()}}
 \item \href{#method-HaploObject-load_pheno}{\code{HaploObject$load_pheno()}}
 \item \href{#method-HaploObject-get_subset}{\code{HaploObject$get_subset()}}
-\item \href{#method-HaploObject-define_blocks_fixed}{\code{HaploObject$define_blocks_fixed()}}
-\item \href{#method-HaploObject-define_blocks_ld}{\code{HaploObject$define_blocks_ld()}}
+\item \href{#method-HaploObject-define_haploblocks}{\code{HaploObject$define_haploblocks()}}
 \item \href{#method-HaploObject-estimate_marker_effects}{\code{HaploObject$estimate_marker_effects()}}
 \item \href{#method-HaploObject-encode_haplotypes}{\code{HaploObject$encode_haplotypes()}}
 \item \href{#method-HaploObject-calculate_local_gebv}{\code{HaploObject$calculate_local_gebv()}}
@@ -177,43 +176,30 @@ Get a subset of the genotype matrix.
 }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-HaploObject-define_blocks_fixed"></a>}}
-\if{latex}{\out{\hypertarget{method-HaploObject-define_blocks_fixed}{}}}
-\subsection{Method \code{define_blocks_fixed()}}{
-Define haplotype blocks using fixed window size.
+\if{html}{\out{<a id="method-HaploObject-define_haploblocks"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-define_haploblocks}{}}}
+\subsection{Method \code{define_haploblocks()}}{
+Define haplotype blocks.
+Optimized to run O(N) instead of O(N^2) for LD scanning.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$define_blocks_fixed(window_size)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{window_size}}{Number of markers per block.}
-}
-\if{html}{\out{</div>}}
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-HaploObject-define_blocks_ld"></a>}}
-\if{latex}{\out{\hypertarget{method-HaploObject-define_blocks_ld}{}}}
-\subsection{Method \code{define_blocks_ld()}}{
-Define haplotype blocks using LD scan.
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$define_blocks_ld(
-  r2_threshold = 0.1,
-  tolerance = 3,
-  window_size = 2000
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$define_haploblocks(
+  method = "ld",
+  r2_threshold = 0.5,
+  window_size = 2000,
+  tolerance = 2
 )}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{r2_threshold}}{r2 threshold for block definition.}
+\item{\code{method}}{String. "ld" (default) or "fixed".}
 
-\item{\code{tolerance}}{Number of failures allowed before ending a block.}
+\item{\code{r2_threshold}}{Threshold for LD-based blocking (default 0.5).}
 
-\item{\code{window_size}}{Maximum window size to scan.}
+\item{\code{window_size}}{Maximum window size (markers) for LD scan or fixed size.}
+
+\item{\code{tolerance}}{Number of SNPs below r2 threshold allowed before breaking block.}
 }
 \if{html}{\out{</div>}}
 }
@@ -681,7 +667,7 @@ Visualizes structural drivers (e.g. centromeres).
 \if{latex}{\out{\hypertarget{method-HaploObject-plot_scree}{}}}
 \subsection{Method \code{plot_scree()}}{
 Plot Scree Plot of Factor Analysis.
-Shows % variance explaining by each factor or singular value.
+Shows Percent Variance Explained by each factor or singular value.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_scree()}\if{html}{\out{</div>}}
 }

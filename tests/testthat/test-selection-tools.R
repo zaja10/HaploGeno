@@ -20,7 +20,7 @@ test_that("Selection and Profiling Tools run without error", {
     haplo$load_pheno(as.vector(pheno))
 
     # Blocks & Effects
-    haplo$define_blocks_fixed(window_size = 5)
+    haplo$define_haploblocks(method="fixed", window_size = 5)
     haplo$marker_effects <- runif(n_markers)
 
     # Compute Required Stats

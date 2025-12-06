@@ -32,7 +32,7 @@ test_that("Analysis features work correctly", {
   obj$load_pheno(y)
   
   # Run pipeline steps needed for analysis
-  obj$define_blocks_fixed(window_size = 10)
+  obj$define_haploblocks(method="fixed", window_size = 10)
   obj$encode_haplotypes()
   obj$compute_hrm()
   obj$estimate_marker_effects()

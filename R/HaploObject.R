@@ -215,120 +215,142 @@ HaploObject <- R6::R6Class("HaploObject",
             return(self$geno[row_ind, col_ind])
         },
         #' @description
-        #' Define haplotype blocks using fixed window size.
-        #' @param window_size Number of markers per block.
-        define_blocks_fixed = function(window_size) {
-            # window_size in number of markers (e.g., 100)
-            # Populates self$blocks with Start/End indices
-            if (is.null(self$map)) stop("Map not loaded. Please load map first.")
-
-
-            if (!is.null(self$active_markers)) {
-                n_markers <- length(self$active_markers)
-            } else {
-                n_markers <- ncol(self$geno)
-            }
-
-            starts <- seq(1, n_markers, by = window_size)
-            ends <- pmin(starts + window_size - 1, n_markers)
-
-            self$blocks <- data.table::data.table(
-                BlockID = seq_along(starts),
-                Start = starts,
-                End = ends
-            )
-
-            message("Defined ", nrow(self$blocks), " blocks.")
-        },
-        #' @description
-        #' Define haplotype blocks using LD scan.
-        #' @param r2_threshold r2 threshold for block definition.
-        #' @param tolerance Number of failures allowed before ending a block.
-        #' @param window_size Maximum window size to scan.
-        define_blocks_ld = function(r2_threshold = 0.1, tolerance = 3, window_size = 2000) {
+        #' Define haplotype blocks.
+        #' Optimized to run O(N) instead of O(N^2) for LD scanning.
+        #' @param method String. "ld" (default) or "fixed".
+        #' @param r2_threshold Threshold for LD-based blocking (default 0.5).
+        #' @param window_size Maximum window size (markers) for LD scan or fixed size.
+        #' @param tolerance Number of SNPs below r2 threshold allowed before breaking block.
+        define_haploblocks = function(method = "ld", r2_threshold = 0.5, window_size = 2000, tolerance = 2) {
             if (is.null(self$geno)) stop("Genotypes not loaded.")
 
-            message("Defining blocks using LD scan (r2 >= ", r2_threshold, ", tol = ", tolerance, ") with window size ", window_size, "...")
-
-            message("Defining blocks using LD scan (r2 >= ", r2_threshold, ", tol = ", tolerance, ") with window size ", window_size, "...")
-
+            # 1. Determine Indices (Active vs All)
             if (!is.null(self$active_markers)) {
                 n_markers <- length(self$active_markers)
+                indices_map <- self$active_markers # Maps relative (1..m) to absolute (FBM col)
             } else {
                 n_markers <- ncol(self$geno)
+                indices_map <- 1:n_markers
             }
-            starts <- c()
-            ends <- c()
 
-            current_start <- 1
-
-            progressr::with_progress({
-                p <- progressr::progressor(steps = n_markers)
-
-                while (current_start <= n_markers) {
-                    # Define window indices
-                    window_end <- min(current_start + window_size, n_markers)
-                    indices <- current_start:window_end
-
-                    if (length(indices) < 2) {
-                        # End of genome
-                        starts <- c(starts, current_start)
-                        ends <- c(ends, window_end)
-                        p(amount = length(indices))
-                        break
-                    }
-
-                    # Use big_crossprodSelf to compute X'X on scaled data
-                    # This gives the correlation matrix * (n-1)
-                    # Use big_crossprodSelf to compute X'X on scaled data
-                    # This gives the correlation matrix * (n-1)
-
-                    real_indices <- indices
-                    if (!is.null(self$active_markers)) {
-                        real_indices <- self$active_markers[indices]
-                    }
-
-                    K <- bigstatsr::big_crossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = real_indices)
-
-                    # Convert to standard matrix and normalize
-                    corr_mat <- K[] / (nrow(self$geno) - 1)
-
-                    # Extract correlations with the first marker in the window (current_start)
-                    r_vals <- corr_mat[1, ]
-                    r2_vals <- r_vals^2
-
-                    # Scan for block end
-                    failures <- 0
-                    block_end_rel <- 1 # Relative index in r2_vals
-
-                    for (j in 2:length(r2_vals)) {
-                        if (is.na(r2_vals[j])) r2_vals[j] <- 0
-
-                        if (r2_vals[j] >= r2_threshold) {
-                            block_end_rel <- j
-                            failures <- 0
-                        } else {
-                            failures <- failures + 1
-                        }
-
-                        if (failures > tolerance) {
-                            break
-                        }
-                    }
-
-                    # Absolute end index
-                    current_end <- indices[block_end_rel]
-
-                    starts <- c(starts, current_start)
-                    ends <- c(ends, current_end)
-
-                    # Update progress
-                    p(amount = current_end - current_start + 1)
-
-                    current_start <- current_end + 1
+            # 2. Get Chromosome Boundaries (if map exists)
+            # We must break blocks at chromosome changes
+            chr_breaks <- integer(0)
+            if (!is.null(self$map) && "chr" %in% names(self$map)) {
+                # Get chrs for active markers
+                chrs <- self$map$chr[indices_map]
+                # Find indices where chr changes
+                if (length(unique(chrs)) > 1) {
+                    chr_breaks <- which(diff(as.numeric(as.factor(chrs))) != 0) + 1 # +1 to get start of new chr
                 }
-            })
+            }
 
+            starts <- integer()
+            ends <- integer()
+            current_idx <- 1
+
+            message("Defining haplotype blocks using method: ", method)
+
+            if (method == "fixed") {
+                # --- Fixed Window Logic ---
+                # Simple implementation: ignores chr breaks for fixed windows to match old behavior,
+                # unless we want to be smarter.
+                # Let's stick to the requested simple logic for fixed, but using the unified indices.
+                p <- seq(1, n_markers, by = window_size)
+                starts <- p
+                ends <- pmin(starts + window_size - 1, n_markers)
+            } else if (method == "ld") {
+                # --- Optimized LD Logic ---
+                # Optimization: Extract window to memory and use base::cor()
+
+                progressr::with_progress({
+                    p <- progressr::progressor(steps = n_markers)
+
+                    while (current_idx <= n_markers) {
+                        # Determine search horizon
+                        limit_idx <- min(current_idx + window_size, n_markers)
+
+                        # Check for chromosome break in this range
+                        # chr_breaks contains indices of STARTS of new chroms
+                        # So if current is 100, and break is at 150, we can go up to 149.
+                        next_break <- chr_breaks[chr_breaks > current_idx & chr_breaks <= limit_idx]
+                        if (length(next_break) > 0) {
+                            limit_idx <- min(next_break) - 1
+                        }
+
+                        # If limit <= current (e.g. at end or just before break), just take 1 marker
+                        if (limit_idx < current_idx) {
+                            # Should not happen if logic is correct, but safe fallback
+                            starts <- c(starts, current_idx)
+                            ends <- c(ends, current_idx)
+                            p(amount = 1)
+                            current_idx <- current_idx + 1
+                            next
+                        }
+
+                        # Define range relative to active set
+                        rel_range <- current_idx:limit_idx
+                        # Map to absolute columns in FBM
+                        abs_range <- indices_map[rel_range]
+
+                        if (length(abs_range) < 2) {
+                            starts <- c(starts, current_idx)
+                            ends <- c(ends, limit_idx)
+                            p(amount = length(abs_range))
+                            current_idx <- limit_idx + 1
+                            next
+                        }
+
+                        # Extract data to memory
+                        # mat is [Individuals x WindowSize]
+                        mat <- self$geno[, abs_range, drop = FALSE]
+
+                        # Calculate correlation of Anchor (col 1) vs All Others
+                        # use="pairwise" handles NAs automatically
+                        r_vals <- cor(mat[, 1], mat, use = "pairwise.complete.obs")
+                        r2_vals <- r_vals[1, ]^2
+
+                        # Scan for block break
+                        failures <- 0
+                        block_len <- 0
+
+                        for (j in 2:length(r2_vals)) {
+                            if (is.na(r2_vals[j])) r2_vals[j] <- 0
+
+                            if (r2_vals[j] >= r2_threshold) {
+                                failures <- 0
+                                block_len <- j # j is relative to current_idx
+                            } else {
+                                failures <- failures + 1
+                            }
+
+                            if (failures > tolerance) break
+                        }
+
+                        # Determine end index
+                        # If block_len is 0 (immediate failure), we still take the anchor itself?
+                        # Or if first check failed?
+                        # If j=2 failed, block_len is 0.
+                        # This means only the first marker is in the block.
+                        if (block_len == 0) block_len <- 1
+
+                        final_end <- current_idx + block_len - 1
+
+                        # Store
+                        starts <- c(starts, current_idx)
+                        ends <- c(ends, final_end)
+
+                        # Advance
+                        step_size <- final_end - current_idx + 1
+                        p(amount = step_size)
+                        current_idx <- final_end + 1
+                    }
+                })
+            } else {
+                stop("Unknown method. Use 'ld' or 'fixed'.")
+            }
+
+            # Store results
             self$blocks <- data.table::data.table(
                 BlockID = seq_along(starts),
                 Start = starts,
@@ -1456,7 +1478,6 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @param scale_vectors Scalar to adjust the length of vectors for visualization. If NULL, auto-scales.
         #' @param label_blocks Boolean, whether to label the block vectors with their IDs.
         #' @param highlight_ind Optional. Vector of sample names or indices to highlight.
-
         plot_haplo_biplot = function(top_n = 10, groups = NULL, scale_vectors = NULL, label_blocks = TRUE, highlight_ind = NULL) {
             # 1. Validation
             if (is.null(self$hrm)) stop("HRM not computed. Run compute_hrm() first.")
@@ -1667,7 +1688,7 @@ HaploObject <- R6::R6Class("HaploObject",
         },
         #' @description
         #' Plot Scree Plot of Factor Analysis.
-        #' Shows % variance explaining by each factor or singular value.
+        #' Shows Percent Variance Explained by each factor or singular value.
         plot_scree = function() {
             if (is.null(private$fa_results)) stop("Run analyze_block_structure() first.")
 

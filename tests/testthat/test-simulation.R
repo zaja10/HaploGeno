@@ -19,7 +19,7 @@ test_that("KRR captures haplotype effects in simulation", {
   haplo$load_map(map)
   
   # Define blocks (size 10)
-  haplo$define_blocks_fixed(10)
+  haplo$define_haploblocks(method="fixed", 10)
   haplo$encode_haplotypes()
   
   # Simulate Phenotype based on Haplotypes

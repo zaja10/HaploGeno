@@ -18,7 +18,7 @@ test_that("Parallel execution works and matches sequential", {
   haplo$import_genotypes(geno_mat)
   haplo$load_map(map)
   haplo$load_pheno(y)
-  haplo$define_blocks_fixed(10)
+  haplo$define_haploblocks(method="fixed", 10)
   
   # 1. Parallel Encoding
   # Run sequential first

@@ -38,7 +38,7 @@ test_that("Active markers bug in calculate_local_gebv is fixed", {
     # 5. Define blocks (Fixed window of 5 markers)
     # But 5 markers in REMOTE/RELATIVE index space (of 18 active markers)
     # Blocks should be based on length(active_markers) = 18.
-    haplo$define_blocks_fixed(window_size = 5)
+    haplo$define_haploblocks(method = "fixed", window_size = 5)
 
     # 6. Mock marker effects (size of active_markers)
     haplo$marker_effects <- rnorm(length(keep_cols))
@@ -53,7 +53,7 @@ test_that("Active markers bug in calculate_local_gebv is fixed", {
     keep_cols_3 <- 11:n_markers
     haplo$active_markers <- keep_cols_3
     haplo$marker_effects <- rep(1, length(keep_cols_3)) # All effects = 1
-    haplo$define_blocks_fixed(window_size = 5)
+    haplo$define_haploblocks(method = "fixed", window_size = 5)
 
     # Block 1: Rel 1-5. Active: 11, 12, 13, 14, 15.
     # Current Buggy Code: Check 1:5 %in% 11:20 -> None. Returns 0.
@@ -120,7 +120,7 @@ test_that("get_block_markers works", {
     haplo$load_map(map)
 
     # Blocks (fixed)
-    haplo$define_blocks_fixed(window_size = 5)
+    haplo$define_haploblocks(method = "fixed", window_size = 5)
 
     # Check Block 1 markers
     # Default (all active)
@@ -129,7 +129,7 @@ test_that("get_block_markers works", {
 
     # With active markers subset
     haplo$active_markers <- 11:20
-    haplo$define_blocks_fixed(window_size = 5)
+    haplo$define_haploblocks(method = "fixed", window_size = 5)
     # Block 1 in relative space (1:5) -> Active 11:15 -> Markers M11:M15
     markers_b1_active <- haplo$get_block_markers(1)
     expect_equal(markers_b1_active, paste0("M", 11:15))
