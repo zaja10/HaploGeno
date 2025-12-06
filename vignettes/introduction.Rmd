@@ -173,6 +173,43 @@ Save the analysis project for later use. This bundles the R object and ensures t
 haplo$save_project(file.path(tempdir(), "haplo_project.rds"))
 ```
 
-# Conclusion
+# 9. Factor Analysis & Structure (New)
+
+Explore the latent genomic architecture by analyzing the covariance of local GEBVs across blocks.
+
+```{r fa_analysis}
+# Phenotypic Variance Explained (PVE)
+haplo$calculate_pve()
+
+# Factor Analysis (SVD + Varimax)
+# Extracts 3 latent factors from top 200 blocks
+haplo$analyze_block_structure(top_n = 200, factors = 3)
+
+# Visualize Structure
+haplo$plot_scree()
+haplo$plot_communality()
+```
+
+Visualize the genomic loadings of the extracted latent factors.
+
+```{r fa_genome, fig.width=8, fig.height=6}
+haplo$plot_fa_genome()
+```
+
+# 10. Selection & Profiling
+
+Identify candidate lines for breeding based on specific haplotype combinations.
+
+```{r selection}
+# Get superior and inferior genotypes for top blocks
+extremes <- haplo$get_haplo_extremes(top_n = 10, threshold = 1.0)
+print(extremes[[1]]) # View results for the top block
+
+# Visualize Haplotype Profile (Mosaic Heatmap)
+# Shows the "genetic formula" of the top 50 lines
+haplo$plot_haplo_profile(top_n_blocks = 20, sort_by = "pheno")
+```
+
+# 11. Conclusion
 
 `HaploGeno` provides a streamlined, high-performance pipeline for haplotype-based analysis, scaling from small test datasets to large genomic studies.

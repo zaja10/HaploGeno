@@ -33,24 +33,30 @@ Traditional genomic prediction models often rely on single-marker effects, poten
 ### 4. QTL Discovery (Local)
 
 - **localGEBV Methodology** (Shaffer et al. 2025):
-  - **Marker Effects**: Estimates SNP effects using Ridge Regression (with manual scaling for correctness).
+  - **Marker Effects**: Estimates SNP effects using Ridge Regression.
   - **Local GEBV**: Calculates Genomic Estimated Breeding Values for specific haploblocks.
-  - **Variance Analysis**: Computes the variance of local GEBVs to identify significant genomic regions.
-  - **Significance Testing**: Implements a Scaled Inverse Chi-Squared test ($\nu=0.5, \tau^2=0.5$) to assess block significance with `test_significance()`.
-  - **Robustness**:
-    - `filter_monomorphic()`: Automatically removes zero-variance markers.
-    - `save_project()` / `load_haplo_project()`: Safe persistence of analysis projects.
+  - **Significance Testing**: Implements a Scaled Inverse Chi-Squared test to assess block significance with `test_significance()`.
 
-### 5. Analysis & Visualization
+### 5. Statistical Engine (New)
+
+- **Factor Analysis (Haplo-FA)**:
+  - Performs internal Factor Analysis on local GEBVs to extract latent genomic gradients.
+  - **Percent Variance Explained (PVE)**: Calculates phenotypic variance explained by each block.
+  - **Structural Drivers**: Analyzes the relationship between Communality and Position.
+
+### 6. Analysis & Visualization (Base R)
 
 - **Visualization**:
-  - **Manhattan Plot**: Visualize significant QTLs with `plot_manhattan()`.
-  - **PCA**: Assess population structure with `plot_pca()`.
-  - **GEBV Heatmap**: Visualize local GEBV patterns with `plot_gebv_image()`.
-- **Selection Tools**:
-  - **Superior Haplotypes**: Identify favorable alleles in top blocks with `identify_superior_haplotypes()`.
-  - **Stacking Scores**: Rank individuals by the number of favorable alleles with `score_stacking()`.
-  - **Validation**: Correlate stacking scores with phenotypes with `plot_stacking_trend()`.
+  - **Biplot**: Genomic Architecture Biplot (`plot_haplo_biplot`).
+  - **Factor Genome**: Stacked "Manhattan-like" plots for latent factors (`plot_fa_genome`).
+  - **Communality**: Visualize structural constraints (`plot_communality`).
+  - **Scree Plot**: Variance explained by extracted factors (`plot_scree`).
+  - **Manhattan Plot**: Standard QTL visualization (`plot_manhattan`).
+
+### 7. Selection & Profiling (New)
+
+- **Haplotype Extremes**: Identify superior/inferior genotypes for crossing (`get_haplo_extremes`).
+- **Haplotype Profile**: Mosaic heatmap of genetic formulas (`plot_haplo_profile`).
 
 ### 6. Demo Dataset
 
@@ -91,13 +97,18 @@ results <- haplo$test_significance()
 
 # 5. Visualize & Analyze
 haplo$plot_manhattan()
-haplo$plot_pca()
+haplo$plot_haplo_biplot(top_n = 10)
+haplo$plot_fa_genome()
 
-# 6. Selection
-top_haplos <- haplo$identify_superior_haplotypes(top_n = 10)
-scores <- haplo$score_stacking(top_haplos)
-haplo$plot_stacking_trend(scores)
-print(head(scores))
+# 6. Factor Analysis & Structure
+haplo$calculate_pve()
+haplo$analyze_block_structure(factors = 3)
+haplo$plot_scree()
+haplo$plot_communality()
+
+# 7. Selection
+extremes <- haplo$get_haplo_extremes(top_n = 10)
+haplo$plot_haplo_profile(top_n_blocks = 20)
 
 # 7. Save Project
 haplo$save_project("my_analysis.rds")
