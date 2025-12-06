@@ -94,8 +94,8 @@ Filter out monomorphic markers (zero variance) and impute missing data.
 # Filter monomorphic markers
 haplo$filter_monomorphic()
 
-# Impute missing genotypes
-haplo$impute_genotypes(method = "mean")
+# Impute missing genotypes (Expectation method preserves dosage)
+haplo$impute_genotypes(method = "expectation")
 ```
 
 # 4. Defining Haplotype Blocks
@@ -149,13 +149,13 @@ alpha <- haplo$fit_krr(lambda = best_lambda)
 Calculate Local Genomic Estimated Breeding Values (GEBVs) to identify significant genomic regions.
 
 ```{r local_gebv}
-# Estimate marker effects (required for local GEBV)
-haplo$estimate_marker_effects(lambda = best_lambda)
+# Estimate marker effects (required for local GEBV) using Auto-Regularization
+haplo$estimate_marker_effects(lambda = "auto")
 
 # Calculate local GEBVs
 haplo$calculate_local_gebv(n_cores = 2)
 
-# Perform significance testing (simple variance test)
+# Perform significance testing (Empirical Permutation Test)
 haplo$test_significance()
 ```
 

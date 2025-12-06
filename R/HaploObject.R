@@ -387,8 +387,8 @@ HaploObject <- R6::R6Class("HaploObject",
         },
         #' @description
         #' Estimate marker effects using Ridge Regression.
-        #' @param lambda Regularization parameter.
-        estimate_marker_effects = function(lambda = 1.0) {
+        #' @param lambda Regularization parameter. Can be a numeric value or "auto" (default) to estimate optimal lambda via Cross-Validation.
+        estimate_marker_effects = function(lambda = "auto") {
             if (is.null(self$geno)) stop("Genotypes not loaded.")
             if (is.null(self$pheno)) stop("Phenotypes not loaded.")
 
@@ -405,6 +405,76 @@ HaploObject <- R6::R6Class("HaploObject",
             n <- nrow(self$geno)
             p <- ncol(self$geno)
             y <- self$pheno
+            
+            # --- Auto-Lambda Estimation (Grid Search CV) ---
+            if (is.character(lambda) && lambda == "auto") {
+                message("Optimizing regularization parameter (Lambda) via 5-Fold Cross-Validation...")
+                
+                # Grid of candidate lambdas (log10 scale)
+                # Lambda represents Noise Variance / Genetic Variance ratio
+                # Typical range: 1e-4 (High Heritability) to 1e3 (Low Heritability)
+                cand_lambdas <- 10^seq(-3, 3, by = 0.5)
+                
+                # Setup CV
+                k_folds <- 5
+                folds <- cut(seq(1, n), breaks = k_folds, labels = FALSE)
+                
+                # Need K matrix for CV speed (Kernel Ridge CV is O(N^3))
+                # Compute K once
+                ind_col <- if (!is.null(self$active_markers)) self$active_markers else bigstatsr::cols_along(self$geno)
+                
+                # Check for monomorphic markers first to avoid errors
+                stats_check <- bigstatsr::big_colstats(self$geno, ind.col = ind_col)
+                keep_bool <- stats_check$var > 1e-8
+                if (!all(keep_bool)) {
+                     ind_col <- ind_col[keep_bool]
+                     self$active_markers <- ind_col
+                }
+                
+                message("Computing GRM for CV steps...")
+                K_full <- bigstatsr::big_tcrossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = ind_col)
+                K_full <- K_full[] / length(ind_col) # Normalize
+                
+                I <- diag(n)
+                cv_errors <- numeric(length(cand_lambdas))
+                
+                # Simple loop for now (could parallelize but N might be small enough)
+                # Actually, for N=1000, N^3 is 1e9 ops. Parallelization helps.
+                # Use future if plan is set.
+                
+                progressr::with_progress({
+                    p_prog <- progressr::progressor(steps = length(cand_lambdas))
+                    
+                    mse_list <- future.apply::future_lapply(cand_lambdas, function(lam) {
+                        p_prog()
+                        err_sum <- 0
+                        for (k in 1:k_folds) {
+                            idx_val <- which(folds == k)
+                            idx_trn <- which(folds != k)
+                            
+                            K_trn <- K_full[idx_trn, idx_trn]
+                            K_val_trn <- K_full[idx_val, idx_trn]
+                            y_trn <- y[idx_trn]
+                            y_val <- y[idx_val]
+                            
+                            # Train
+                            # alpha = (K + lambda*I)^-1 y
+                            alpha <- solve(K_trn + lam * diag(length(idx_trn)), y_trn)
+                            
+                            # Predict
+                            y_pred <- K_val_trn %*% alpha
+                            err_sum <- err_sum + sum((y_val - y_pred)^2)
+                        }
+                        return(err_sum / n)
+                    }, future.seed = TRUE)
+                })
+                
+                cv_errors <- unlist(mse_list)
+                best_idx <- which.min(cv_errors)
+                lambda <- cand_lambdas[best_idx]
+                
+                message("Optimal Lambda selected: ", round(lambda, 5), " (MSE: ", round(min(cv_errors), 4), ")")
+            }
 
             # Center genotypes? Usually yes for genomic prediction.
             # We can use bigstatsr::big_scale() implicitly if we use bigstatsr functions.
@@ -631,65 +701,129 @@ HaploObject <- R6::R6Class("HaploObject",
         },
         #' @description
         #' Test significance of local GEBVs.
+        #' Uses an Empirical Permutation Test to determine significance thresholds.
         #' @return Data.table of p-values.
         test_significance = function() {
             if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
 
-            message("Testing significance (Scaled Inverse Chi-Squared)...")
+            message("Testing significance (Empirical Permutation Test)...")
 
-            vars <- self$local_gebv$variances
-
-            # Scaled Inverse Chi-Squared Test
-            # H0: variance = 0? Or variance = expected?
-            # Shaffer et al. usually compares to a null distribution or uses a specific parameterization.
-            # The prompt says: "Uses Scaled Inverse Chi-Squared (v=0.5, tau^2=0.5)"
-
-            # This implies we are calculating a p-value based on the observed variance
-            # under a Scaled Inv-Chi-Sq distribution with parameters nu=0.5, tau2=0.5.
-
-            # The PDF of Scaled Inv-Chi-Sq(nu, tau2) is ...
-            # Actually, usually we use this for Bayesian priors.
-            # If used for testing, maybe we are testing if the variance is consistent with noise?
-            # Or is it a p-value FROM the CDF?
-
-            # Let's assume we want P(X > var) where X ~ Scaled-Inv-Chi-Sq(0.5, 0.5)
-            # Scaled-Inv-Chi-Sq(nu, tau2) is equivalent to:
-            # (nu * tau2) / X ~ Chi-Sq(nu)
-
-            # So X ~ (nu * tau2) / Chi-Sq(nu)
-            # We want P(X > observed_var)
-            # = P( (nu * tau2) / Chi-Sq(nu) > observed_var )
-            # = P( Chi-Sq(nu) < (nu * tau2) / observed_var )
-
-            nu <- 0.5
-            tau2 <- 0.5
-            scale_param <- nu * tau2
-
-            # Calculate statistic for each block
-            # Avoid division by zero
-            safe_vars <- vars
-            safe_vars[safe_vars < 1e-10] <- 1e-10
-
-            chi_sq_stats <- scale_param / safe_vars
-
-            # P-value = P(Chi-Sq(nu) < stat)
-            # This seems inverted. Usually large variance is significant.
-            # If variance is LARGE, then stat is SMALL.
-            # P(Chi-Sq < small) is small.
-            # So yes, this direction makes sense: Small p-value for large variance.
-
-            p_values <- pchisq(chi_sq_stats, df = nu)
+            # Permutation Test Strategy:
+            # 1. Permute Phenotypes (break genetic link)
+            # 2. Re-calculate Marker Effects (Fast Approximation)
+            # 3. Calculate Null Local GEBV Variances
+            # 4. Compare Observed Variance to Null Distribution
+            
+            # Since full permutation is expensive (re-running ridge), we use a heuristic.
+            # Under null, marker effects should be unstructured noise scaled by lambda.
+            
+            # Robust Approach:
+            # Run 5 permutations of Y. For each, calculate effects, compute var(GEBV) for a random subset of blocks (e.g. 50).
+            # Build a null distribution of Variances.
+            
+            n_perms <- 10
+            n_null_blocks <- min(50, nrow(self$blocks))
+            null_vars <- numeric(n_perms * n_null_blocks)
+            
+            # Helper to get fast variances
+            # Pre-calc scaling
+            ind_col <- if (!is.null(self$active_markers)) self$active_markers else bigstatsr::cols_along(self$geno)
+            stats <- bigstatsr::big_scale()(self$geno, ind.col = ind_col)
+            mus <- stats$center
+            sigmas <- stats$scale
+            
+            # Pre-calc K for fast solving?
+            # If we already have K from estimate_marker_effects, reuse it?
+            # It's not stored. But we can quickly recompute K if N is small.
+            # If N is large, this is slow.
+            
+            # Optimization: If K was used, maybe store it temporarily?
+            # For now, let's assume N is manageable or pay the compute cost.
+            # Recomputing K ...
+            
+            n <- nrow(self$geno)
+            K <- bigstatsr::big_tcrossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = ind_col)
+            K <- K[] / length(ind_col)
+            
+            lambda <- if(!is.null(self$model_info$lambda)) self$model_info$lambda else 1.0
+            I <- diag(n)
+            Ki <- solve(K + lambda * I) # Invert once? No, permutations change Y, not K.
+            
+            # Wait, solve(A, y). If A is constant (K + lambda I), we can invert A once.
+            # Then alpha = A_inv %*% y_perm
+            
+            message("Generating Null Distribution (", n_perms, " permutations)...")
+            
+            counter <- 1
+            for(i in 1:n_perms) {
+                y_perm <- sample(self$pheno)
+                alpha_perm <- Ki %*% y_perm
+                
+                # Back-calc effects (u = Z' alpha)
+                # Only need effects for the random blocks
+                
+                # Sample random blocks
+                rand_blk_ids <- sample(1:nrow(self$blocks), n_null_blocks)
+                
+                for(b_id in rand_blk_ids) {
+                    start <- self$blocks$Start[b_id]
+                    end <- self$blocks$End[b_id]
+                    indices <- start:end # Relative to start if active map used?
+                    
+                    # Mapping logic (same as calculate_local_gebv)
+                     if (!is.null(self$active_markers)) {
+                        rel_indices <- indices
+                        abs_indices <- self$active_markers[rel_indices]
+                        
+                        raw_u <- bigstatsr::big_cprodVec(self$geno, alpha_perm, ind.col = abs_indices)
+                        sum_alpha <- sum(alpha_perm)
+                        u_hat <- (raw_u - mus[rel_indices] * sum_alpha) / sigmas[rel_indices]
+                        
+                        # Compute GEBV
+                        weights <- u_hat / sigmas[rel_indices]
+                        offset <- sum(mus[rel_indices] * weights)
+                        gebv <- bigstatsr::big_prodVec(self$geno, weights, ind.col = abs_indices) - offset
+                    } else {
+                        raw_u <- bigstatsr::big_cprodVec(self$geno, alpha_perm, ind.col = indices)
+                        sum_alpha <- sum(alpha_perm)
+                        u_hat <- (raw_u - mus[indices] * sum_alpha) / sigmas[indices]
+                        
+                        weights <- u_hat / sigmas[indices]
+                        offset <- sum(mus[indices] * weights)
+                        gebv <- bigstatsr::big_prodVec(self$geno, weights, ind.col = indices) - offset
+                    }
+                    
+                    null_vars[counter] <- var(gebv)
+                    counter <- counter + 1
+                }
+            }
+            
+            # Compute P-values
+            # P = (Number of Null Vars >= Observed Var) / Total Null
+            # This is a bit coarse if null_vars is small.
+            # Alternate: Fit a distribution (Gamma?) to null vars and get tail prob.
+            
+            # Simply use rank for now.
+            obs_vars <- self$local_gebv$variances
+            
+            # ECDF
+            null_ecdf <- ecdf(null_vars)
+            p_values <- 1 - null_ecdf(obs_vars)
+            
+            # Correction: Ensure no exactly 0 p-values for log plots
+            min_p <- 1 / (length(null_vars) + 1)
+            p_values[p_values == 0] <- min_p
 
             self$significance <- data.table::data.table(
                 BlockID = self$blocks$BlockID,
-                Variance = vars,
+                Variance = obs_vars,
                 P_Value = p_values
             )
 
             return(self$significance)
         },
         #' @description
-        #' Calculate Percent Variance Explained (PVE) by each block.
+        #' Calculate Percent Variance Explained (Marginal PVE) by each block.
         #' Computes r^2 between local GEBVs and phenotypes.
         #' Optionally applies "Marker-Out" correction (de-regression) using model parameters.
         #' @param adjust Logical. If TRUE, applies correction factor using lambda/p.
@@ -698,7 +832,7 @@ HaploObject <- R6::R6Class("HaploObject",
             if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
             if (is.null(self$pheno)) stop("Phenotypes not loaded.")
 
-            message("Calculating Phenotypic Variance Explained (PVE)...")
+            message("Calculating Phenotypic Variance Explained (Marginal PVE)...")
 
             # cor() is fast and base R, handle missing values with use="pairwise"
             # local_gebv$matrix is N x M, pheno is N x 1
@@ -748,10 +882,11 @@ HaploObject <- R6::R6Class("HaploObject",
         },
         #' @description
         #' Analyze block structure using internal Factor Analysis (Latent Regression).
-        #' Models Local GEBVs as function of latent genomic gradients.
+        #' Models Local GEBVs as function of latent genomic gradients using Maximum Likelihood Estimation (MLE).
         #' @param top_n Number of top variance blocks to use.
         #' @param factors Number of latent factors to extract.
-        analyze_block_structure = function(top_n = 500, factors = 2) {
+        #' @param use_covariance Logical. If TRUE, uses the Covariance matrix (preserving magnitude). If FALSE (default), uses Correlation matrix (standardized).
+        analyze_block_structure = function(top_n = 500, factors = 2, use_covariance = FALSE) {
             if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
 
             message("Running Haplo-FA (Internal Factor Analysis) on top ", top_n, " blocks...")
@@ -772,74 +907,70 @@ HaploObject <- R6::R6Class("HaploObject",
 
             # Indices of top blocks
             top_indices <- order(vars, decreasing = TRUE)[1:effective_n]
+            final_indices <- top_indices
 
             # Subset GEBV matrix
             X <- self$local_gebv$matrix[, top_indices, drop = FALSE]
 
-            # 2. Scale (Z-score)
-            X_scaled <- scale(X)
-            # Remove columns with zero variance (if any slipped through)
-            valid_cols <- which(attr(X_scaled, "scaled:scale") > 1e-10)
-            if (length(valid_cols) < factors) stop("Not enough valid blocks for Factor Analysis.")
+            # 2. Compute Matrix for Analysis (Covariance or Correlation)
+            if (use_covariance) {
+                # Center but DO NOT scale
+                X_anal <- scale(X, center = TRUE, scale = FALSE)
+                R <- cov(X, use = "pairwise.complete.obs")
+                message("Using Covariance Matrix (Magnitude Preserved).")
+            } else {
+                # Center AND Scale (Z-score)
+                X_anal <- scale(X, center = TRUE, scale = TRUE)
+                R <- cor(X, use = "pairwise.complete.obs")
+            }
 
-            X_scaled <- X_scaled[, valid_cols, drop = FALSE]
-            final_indices <- top_indices[valid_cols]
+            # Fit Factor Analysis (MLE method is closest to REML in this context)
+            # Check if we have enough degrees of freedom
+            dof <- 0.5 * ((nrow(R) - factors)^2 - (nrow(R) + factors))
+            if (dof < 0) warning("Factors may be too high for number of blocks (Overfitting).")
 
-            # 3. SVD for Factor Extraction
-            # We want Factor Analysis, can approximate with PCA (SVD on correlation matrix)
-            # Or SVD on data matrix directly.
-            # X_scaled = U D V'.
-            # Loadings = V * D / sqrt(N-1). Scores = U * sqrt(N-1)
+            # stats::factanal expects data or covmat. providing covmat is faster.
+            # note: factanal on covmat will produce loadings on scale of variables if covmat is covariance
+            fa_fit <- stats::factanal(covmat = R, factors = factors, rotation = "varimax")
 
-            s <- svd(X_scaled)
+            # Extract Loadings and Specific Variances (Uniquenesses)
+            L_rotated <- fa_fit$loadings[, ] # Convert to matrix
+            u2 <- fa_fit$uniquenesses # Standardized uniqueness
 
-            # Limit to 'factors' dimensions
-            U <- s$u[, 1:factors, drop = FALSE]
-            D <- diag(s$d[1:factors], nrow = factors, ncol = factors)
-            V <- s$v[, 1:factors, drop = FALSE]
+            # Rescale if using covariance (or just generally to match R's scale)
+            # factanal always returns standardized solution
+            scale_factors <- sqrt(diag(R))
 
-            # Initial (Unrotated) Loadings and Scores
-            # Loadings: Correlation between Item (Block) and Factor
-            # L = V %*% D / sqrt(nrow(X)-1)
-            scale_factor <- sqrt(nrow(X_scaled) - 1)
-            L_unrotated <- V %*% D / scale_factor
+            # Loadings: Scale by SD
+            L_rotated <- sweep(L_rotated, 1, scale_factors, "*")
 
-            # 4. Varimax Rotation
-            # Improves interpretability (simple structure)
-            vm <- varimax(L_unrotated)
-            L_rotated <- vm$loadings # This is class 'loadings', behaves like matrix
-            # Convert to matrix strictly
-            L_rotated <- matrix(as.numeric(L_rotated), nrow = nrow(L_rotated), ncol = ncol(L_rotated))
+            # Uniqueness: Scale by Var (SD^2)
+            # Psi = u2_std * Var
+            u2 <- u2 * (scale_factors^2)
 
-            # Rotated Scores = X_scaled %*% L_rotated %*% solve(t(L_rotated) %*% L_rotated) ?
-            # Or easier: Scores = X_scaled %*% solve(Correlation) %*% L_rotated (Regression method)
-            # For approximate component scores:
-            # Rot = vm$rotmat
-            # Scores_rotated = Scores_unrotated %*% Rot
-            S_unrotated <- U * scale_factor # = X_scaled %*% V (if standardized)
-            S_rotated <- S_unrotated %*% vm$rotmat
+            # Communality (Standardized)
+            # h2 is useful as proportion of variance explained
+            h2 <- 1 - fa_fit$uniquenesses
 
-            colnames(L_rotated) <- paste0("Factor", 1:factors)
-            colnames(S_rotated) <- paste0("Factor", 1:factors)
-
-            # 5. Communality and Specific Variance
-            # h2 = sum of squared loadings
-            h2 <- rowSums(L_rotated^2)
-            u2 <- 1 - h2 # Unique variance / Specific variance
+            # Calculate Scores (Regression Method)
+            # Scores = X_anal %*% solve(R) %*% L
+            # Handle singular matrices with generalized inverse or simple solve if stable
+            weights <- tryCatch(solve(R, L_rotated), error = function(e) MASS::ginv(R) %*% L_rotated)
+            S_rotated <- X_anal %*% weights
 
             # Store Results
             private$fa_results <- list(
                 Loadings = L_rotated,
                 Scores = S_rotated,
                 Communality = h2,
-                SpecificVar = u2,
+                SpecificVar = u2, # This is Psi (Psi = diag(u2))
                 BlockIndices = final_indices,
-                Rotation = vm$rotmat,
-                Pos = (self$blocks$Start[final_indices] + self$blocks$End[final_indices]) / 2
+                Rotation = fa_fit$rotmat,
+                Pos = (self$blocks$Start[final_indices] + self$blocks$End[final_indices]) / 2,
+                UseCovariance = use_covariance
             )
-
-            message("Factor Analysis complete. Retained ", factors, " factors.")
-        },
+            message("Factor Analysis (MLE) complete.")
+        }, ,
         #' @description
         #' Reconstruct model-implied correlation matrix from FA results.
         #' G_smooth = Loadings %*% t(Loadings) + diag(SpecificVar)
@@ -1090,12 +1221,12 @@ HaploObject <- R6::R6Class("HaploObject",
             if (type == "pve" || type == "PVE") {
                 if ("PVE_Adj" %in% names(df)) {
                     val <- df$PVE_Adj
-                    ylab_text <- "PVE (Adjusted)"
+                    ylab_text <- "Marginal PVE (Adjusted)"
                 } else {
                     val <- df$PVE
-                    ylab_text <- "PVE"
+                    ylab_text <- "Marginal PVE"
                 }
-                main_text <- "Manhattan Plot of Block PVE"
+                main_text <- "Manhattan Plot of Marginal PVE"
             } else {
                 # Standard Manhattan (-log10 P)
                 val <- logp
@@ -1142,48 +1273,89 @@ HaploObject <- R6::R6Class("HaploObject",
         #' Plot the Genetic Correlation Heatmap of Top Blocks.
         #' Reconstructs the correlation matrix from latent factors (G = L L') and visualizes it.
         #' @param ... Additional arguments passed to image().
-        plot_factor_heatmap = function(label_axes = TRUE, ...) {
+        #' @description
+        #' Plot the Genetic Correlation Heatmap of Top Blocks.
+        #' Reconstructs the correlation matrix from latent factors (Sigma = L L' + Psi) and visualizes it.
+        #' @param subset_indices Vector of block indices (integer) to plot. If NULL, plots all analyzed blocks.
+        #' @param show_values Logical. If TRUE, overlay the correlation values.
+        #' @param label_axes Logical. If TRUE, label the axes with block indices.
+        #' @param ... Additional arguments passed to image().
+        plot_factor_heatmap = function(subset_indices = NULL, show_values = FALSE, label_axes = TRUE, ...) {
             if (is.null(private$fa_results)) stop("Factor analysis not run. Run analyze_block_structure() first.")
 
-            # Retrieve Loadings
             L <- private$fa_results$Loadings
+            Psi <- private$fa_results$SpecificVar
+            block_ids_all <- private$fa_results$BlockIndices
 
-            # Reconstruct model-implied correlation (Common Variance)
-            # G_common = L %*% t(L)
-            G_mat <- tcrossprod(L)
+            # 1. Reconstruct the Full Model-Implied Correlation Matrix
+            # Sigma = L L' + Psi (where Psi is diagonal uniqueness)
+            Sigma <- tcrossprod(L)
+            diag(Sigma) <- diag(Sigma) + Psi
 
-            # Prepare for image(): Rotate 90 degrees conceptually for visualization
-            # image() needs x, y, z.
-            n <- nrow(G_mat)
+            # Convert to Correlation (should be 1 on diagonal, but ensures math stability)
+            G_cor <- cov2cor(Sigma)
 
-            # Create a diverging palette (Blue - White - Red)
+            # 2. Handle Subsetting
+            if (!is.null(subset_indices)) {
+                # Match user indices to the analyzed set
+                match_idx <- match(subset_indices, block_ids_all)
+                valid <- !is.na(match_idx)
+
+                if (sum(valid) < 2) stop("Fewer than 2 specified blocks were found in the FA results.")
+
+                target_idx <- match_idx[valid]
+                G_plot <- G_cor[target_idx, target_idx, drop = FALSE]
+                labels <- block_ids_all[target_idx]
+            } else {
+                G_plot <- G_cor
+                labels <- block_ids_all
+            }
+
+            # 3. Plotting
+            n <- nrow(G_plot)
             pal <- colorRampPalette(c("navy", "white", "firebrick"))(100)
 
-            # Fix orientation for image()
-            image(1:n, 1:n, t(G_mat)[, n:1],
-                col = pal,
-                axes = FALSE,
-                xlab = "Block Index",
-                ylab = "Block Index",
-                main = "Latent Genetic Correlations",
-                ...
+            # Standard image plot
+            image(1:n, 1:n, t(G_plot)[, n:1],
+                col = pal, axes = FALSE,
+                xlab = "Block Index", ylab = "Block Index",
+                main = "Latent Block Correlations (LD)", ...
             )
+
+            # 4. Feature: Show Values
+            if (show_values) {
+                # Grid coordinates
+                grid_x <- rep(1:n, each = n)
+                grid_y <- rep(n:1, times = n) # Reverse Y for image() orientation
+                val_vec <- as.vector(t(G_plot)) # Flatten row-wise
+
+                # Threshold to change text color (white on dark backgrounds)
+                text_col <- ifelse(abs(val_vec) > 0.5, "white", "black")
+
+                text(
+                    x = grid_x, y = grid_y, labels = round(val_vec, 2),
+                    col = text_col, cex = 0.7, font = 1
+                )
+            }
 
             # Custom Axes
             if (label_axes) {
-                # Get Block IDs from results
-                block_ids <- private$fa_results$BlockIndices
-
-                # If too many blocks, sparsify labels
-                if (n > 20) {
-                    at_idx <- seq(1, n, floor(n / 20))
-                    labels <- block_ids[at_idx]
-                } else {
+                if (!is.null(subset_indices)) {
+                    # If subsetted, we already have exact labels and small n presumably
                     at_idx <- 1:n
-                    labels <- block_ids
+                    # labels are already set in G_plot creation
+                } else {
+                    # If full set, sparsify if too many
+                    if (n > 20) {
+                        at_idx <- seq(1, n, floor(n / 20))
+                        labels <- labels[at_idx]
+                    } else {
+                        at_idx <- 1:n
+                        # labels already set
+                    }
                 }
 
-                axis(1, at = at_idx, labels = labels, las = 2, cex.axis = 0.8) # X-axis
+                axis(1, at = at_idx, labels = labels, las = 2, cex.axis = 0.8)
                 # Y-axis is flipped in image() (1 is bottom)
                 # But we flipped the data t(G)[, n:1]
                 # So row 1 data is at Y-coord n
@@ -1478,13 +1650,14 @@ HaploObject <- R6::R6Class("HaploObject",
 
         #' @description
         #' Impute missing genotypes.
-        #' @param method Imputation method. Currently only "mean" is supported.
-        impute_genotypes = function(method = "mean") {
+        #' @param method Imputation method. "expectation" (default, recommended) replaces NAs with column means without rounding. "mean" rounds to integers but may distort LD.
+        impute_genotypes = function(method = "expectation") {
             if (is.null(self$geno)) stop("Genotypes not loaded.")
 
             message("Imputing missing genotypes (method=", method, ")...")
 
             if (method == "mean") {
+                warning("Method 'mean' rounds imputed values to integers, which may distort LD structure. Use 'expectation' to preserve dosage.")
                 n_markers <- ncol(self$geno)
                 block_size <- 1000
 
@@ -1510,8 +1683,30 @@ HaploObject <- R6::R6Class("HaploObject",
                         self$geno[, ind] <- chunk
                     }
                 }
+                }
+            } else if (method == "expectation") {
+                # Expectation logic: Same as mean but DO NOT ROUND.
+                # This preserves dosage/variance for LD calculations.
+                
+                n_markers <- ncol(self$geno)
+                block_size <- 1000
+
+                for (i in seq(1, n_markers, by = block_size)) {
+                    ind <- i:min(i + block_size - 1, n_markers)
+                    chunk <- self$geno[, ind]
+
+                    if (any(is.na(chunk))) {
+                        mus <- colMeans(chunk, na.rm = TRUE)
+                        for (j in 1:ncol(chunk)) {
+                            if (any(is.na(chunk[, j]))) {
+                                chunk[is.na(chunk[, j]), j] <- mus[j]
+                            }
+                        }
+                        self$geno[, ind] <- chunk
+                    }
+                }
             } else {
-                stop("Only 'mean' imputation is currently supported for double FBMs.")
+                stop("Supported methods: 'mean', 'expectation'.")
             }
 
             message("Imputation complete.")

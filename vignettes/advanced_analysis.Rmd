@@ -59,7 +59,7 @@ This plot helps identify clusters or stratification within the population. If yo
 
 ## Manhattan Plot of Local GEBVs
 
-To identify genomic regions significantly associated with the phenotype, we use a Manhattan plot based on the variance of Local GEBVs. Since our demo data has simulated effects in the first 50 markers, we expect to see significant signals at the beginning of the chromosome.
+To identify genomic regions significantly associated with the phenotype, we use a Manhattan plot based on the variance of Local GEBVs. `HaploGeno` uses an Empirical Permutation Test to determine robust significance thresholds.
 
 ```{r manhattan, fig.width=7, fig.height=5}
 # Plot significance of local GEBV variances
@@ -71,12 +71,12 @@ The alternating colors (black/grey) indicate different chromosomes (or blocks ma
 
 ## PVE Manhattan Plot
 
-In addition to significance, it is often useful to visualize the magnitude of effect. The PVE plot shows the Phenotypic Variance Explained by each block.
+In addition to significance, it is often useful to visualize the magnitude of effect. The PVE plot shows the Marginal Phenotypic Variance Explained (Marginal PVE)
+haplo$calculate_pve()
 
-```{r manhattan_pve, fig.width=7, fig.height=5}
-# Plot PVE of haplotype blocks
-haplo$plot_manhattan(type = "pve")
-```
+# Factor Analysis (FA-LMM)
+# Extracts 3 latent factors from top 200 blocks using MLE on Covariance
+haplo$analyze_block_structure(top_n = 200, factors = 3, use_covariance = TRUE)
 
 ## Local GEBV Heatmap
 
@@ -174,7 +174,7 @@ haplo$plot_haplo_biplot(top_n = 5, label_blocks = TRUE, highlight_ind = c(1, 10,
 
 # 7. Latent Factor Analysis (Haplo-FA)
 
-For complex traits, multiple genomic blocks may vary together due to shared ancestry or selection. `HaploGeno` can perform internal Factor Analysis on the Local GEBVs to identify latent drivers of variance.
+For complex traits, multiple genomic blocks may vary together due to shared ancestry or selection. `HaploGeno` can perform internal Factor Analysis on the Local GEBVs to identify latent drivers of variance. This implementation uses a Maximum Likelihood (MLE) Factor Analysis on the block covariance matrix, consistent with FA-k models in biometric literature (FA-LMM).
 
 ```{r factor_heatmap, fig.width=6, fig.height=6}
 # Visualize the genetic correlation structure implied by the top latent factors

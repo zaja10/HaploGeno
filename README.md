@@ -33,15 +33,16 @@ Traditional genomic prediction models often rely on single-marker effects, poten
 ### 4. QTL Discovery (Local)
 
 - **localGEBV Methodology** (Shaffer et al. 2025):
-  - **Marker Effects**: Estimates SNP effects using Ridge Regression.
+  - **Auto-Regularization**: Optimizes shrinkage ($\lambda$) via Cross-Validation (`estimate_marker_effects(lambda="auto")`).
   - **Local GEBV**: Calculates Genomic Estimated Breeding Values for specific haploblocks.
-  - **Significance Testing**: Implements a Scaled Inverse Chi-Squared test to assess block significance with `test_significance()`.
+  - **Significance Testing**: Implements an **Empirical Permutation Test** to assess block significance robustly with `test_significance()`.
 
 ### 5. Statistical Engine (New)
 
-- **Factor Analysis (Haplo-FA)**:
-  - Performs internal Factor Analysis on local GEBVs to extract latent genomic gradients.
-  - **Percent Variance Explained (PVE)**: Calculates phenotypic variance explained by each block.
+- **Factor Analysis (FA-LMM)**:
+  - Performs Maximum Likelihood Factor Analysis (MLE) on local GEBVs to extract latent genomic gradients.
+  - Supports covariance-based analysis to preserve effect magnitudes.
+  - **Marginal PVE**: Calculates phenotypic variance explained by each block.
   - **Structural Drivers**: Analyzes the relationship between Communality and Position.
 
 ### 6. Analysis & Visualization (Base R)
@@ -58,7 +59,7 @@ Traditional genomic prediction models often rely on single-marker effects, poten
 - **Haplotype Extremes**: Identify superior/inferior genotypes for crossing (`get_haplo_extremes`).
 - **Haplotype Profile**: Mosaic heatmap of genetic formulas (`plot_haplo_profile`).
 
-### 6. Demo Dataset
+### 8. Demo Dataset
 
 - **Quick Start**: Use `load_demo_data()` to load a pre-processed dataset for testing visualization and analysis functions immediately.
 
@@ -80,7 +81,7 @@ haplo$load_pheno(phenotypes)
 
 # 2. Pre-processing
 haplo$filter_monomorphic() # Remove zero-variance markers
-haplo$impute_genotypes(method = "mean") # Impute missing values
+haplo$impute_genotypes(method = "expectation") # Impute missing values (preserving dosage)
 
 # 3. Define Blocks (LD-based)
 haplo$define_blocks_ld(r2_threshold = 0.5, tolerance = 2)
@@ -91,9 +92,9 @@ haplo$compute_hrm()
 alpha <- haplo$fit_krr(lambda = 0.1)
 
 # --- Workflow B: QTL Discovery (localGEBV) ---
-haplo$estimate_marker_effects(lambda = 0.1)
+haplo$estimate_marker_effects(lambda = "auto") # Auto-optimize lambda
 haplo$calculate_local_gebv()
-results <- haplo$test_significance()
+results <- haplo$test_significance() # Run Permutation Test
 
 # 5. Visualize & Analyze
 haplo$plot_manhattan()
@@ -102,7 +103,7 @@ haplo$plot_fa_genome()
 
 # 6. Factor Analysis & Structure
 haplo$calculate_pve()
-haplo$analyze_block_structure(factors = 3)
+haplo$analyze_block_structure(factors = 3, use_covariance = TRUE)
 haplo$plot_scree()
 haplo$plot_communality()
 
