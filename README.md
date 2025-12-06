@@ -114,12 +114,6 @@ haplo$plot_haplo_profile(top_n_blocks = 20)
 haplo$save_project("my_analysis.rds")
 ```
 
-## Future Work
-
-- **Bayesian Models**: Implementation of BayesA/B/C for variable selection.
-- **Multi-Trait Models**: Extension to multi-trait genomic prediction.
-- **Interactive Visualization**: Integration with `plotly` for interactive exploration of results.
-
 ## References
 
 Shaffer, et al. (2025). _Local genomic estimates provide a powerful framework for haplotype discovery_. biorxiv.
