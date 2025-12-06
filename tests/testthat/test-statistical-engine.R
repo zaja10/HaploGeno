@@ -22,6 +22,7 @@ test_that("Statistical Engine works (PVE, FA, Model Corr)", {
     haplo$define_haploblocks(method = "fixed", window_size = 2) # 10 blocks
     # Mock effects to skip estimation
     haplo$marker_effects <- runif(n_markers)
+    haplo$model_info <- list(lambda = 1, p = n_markers, n = n_ind)
 
     # Local GEBV
     haplo$calculate_local_gebv()
@@ -30,9 +31,13 @@ test_that("Statistical Engine works (PVE, FA, Model Corr)", {
     haplo$test_significance()
 
     # 2. Test calculate_pve
-    expect_error(haplo$calculate_pve(), NA)
+    expect_error(haplo$calculate_pve(adjust = TRUE), NA)
     expect_true(!is.null(haplo$significance$PVE))
-    expect_true(all(haplo$significance$PVE >= 0 & haplo$significance$PVE <= 1))
+    expect_true(!is.null(haplo$significance$PVE_Adj))
+
+    # Check that adjustment increases PVE (since correction = 1 + lambda/p > 1)
+    expect_true(all(haplo$significance$PVE_Adj >= haplo$significance$PVE))
+    expect_true(all(haplo$significance$PVE >= 0))
 
     # 3. Test analyze_block_structure
     expect_error(haplo$analyze_block_structure(top_n = 5, factors = 2), NA)

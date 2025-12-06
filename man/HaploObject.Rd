@@ -27,6 +27,8 @@ HaploObject Class
 
 \item{\code{marker_effects}}{Vector of estimated marker effects.}
 
+\item{\code{model_info}}{List containing model training parameters (lambda, p, etc).}
+
 \item{\code{local_gebv}}{List containing local GEBV matrix and variances.}
 
 \item{\code{significance}}{Data.table of significance test results.}
@@ -291,10 +293,22 @@ Data.table of p-values.
 \subsection{Method \code{calculate_pve()}}{
 Calculate Percent Variance Explained (PVE) by each block.
 Computes r^2 between local GEBVs and phenotypes.
+
+
+Calculate Percent Variance Explained (PVE) by each block.
+Computes r^2 between local GEBVs and phenotypes.
+Optionally applies "Marker-Out" correction (de-regression) using model parameters.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$calculate_pve()}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$calculate_pve(adjust = TRUE)}\if{html}{\out{</div>}}
 }
 
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{adjust}}{Logical. If TRUE, applies correction factor using lambda/p.}
+}
+\if{html}{\out{</div>}}
+}
 \subsection{Returns}{
 Updated significance table.
 }
@@ -414,17 +428,28 @@ Cross-validate KRR model.
 \if{html}{\out{<a id="method-HaploObject-plot_manhattan"></a>}}
 \if{latex}{\out{\hypertarget{method-HaploObject-plot_manhattan}{}}}
 \subsection{Method \code{plot_manhattan()}}{
-Plot Manhattan plot of local GEBV significance.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_manhattan(threshold = 0.05)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_manhattan(
+  type = "significance",
+  threshold = 0.05,
+  interactive = FALSE,
+  ...
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{threshold}}{Significance threshold (p-value).}
+\item{\code{type}}{"significance" (default) or "pve".}
+
+\item{\code{threshold}}{Significance threshold (p-value for significance, unused for PVE normally).}
+
+\item{\code{interactive}}{If TRUE, allows clicking on plot to identify blocks.}
 }
 \if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+Vector of selected block IDs if interactive=TRUE, else NULL.
 }
 }
 \if{html}{\out{<hr>}}

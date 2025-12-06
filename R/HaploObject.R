@@ -26,6 +26,8 @@ HaploObject <- R6::R6Class("HaploObject",
         hrm = NULL,
         #' @field marker_effects Vector of estimated marker effects.
         marker_effects = NULL,
+        #' @field model_info List containing model training parameters (lambda, p, etc).
+        model_info = NULL,
         #' @field local_gebv List containing local GEBV matrix and variances.
         local_gebv = NULL,
         #' @field significance Data.table of significance test results.
@@ -38,7 +40,9 @@ HaploObject <- R6::R6Class("HaploObject",
         initialize = function(backing_file_path) {
             # Initialize with a path for the FBM
             private$backing_file <- backing_file_path
+            private$temp_files <- character(0)
         },
+
 
         #' @description
         #' Print a summary of the HaploObject.
@@ -88,6 +92,9 @@ HaploObject <- R6::R6Class("HaploObject",
                     type = "double",
                     backingfile = private$backing_file
                 )
+
+                # Track as temporary since we created it from memory
+                private$temp_files <- c(private$temp_files, private$backing_file)
             } else if (is.character(matrix_or_path)) {
                 if (!file.exists(matrix_or_path)) stop("File not found: ", matrix_or_path)
 
@@ -98,6 +105,9 @@ HaploObject <- R6::R6Class("HaploObject",
                     message("Importing PLINK .bed file...")
                     # snp_readBed creates a .rds file
                     rds_file <- bigsnpr::snp_readBed(matrix_or_path, backingfile = private$backing_file)
+
+                    # Track as temporary
+                    private$temp_files <- c(private$temp_files, private$backing_file)
                     obj <- bigsnpr::snp_attach(rds_file)
                     self$geno <- obj$genotypes
                     # Also load map/fam if possible?
@@ -110,6 +120,9 @@ HaploObject <- R6::R6Class("HaploObject",
                     # snp_readVCF creates a .rds file
                     # Note: snp_readVCF might require specific formatting
                     rds_file <- bigsnpr::snp_readVCF(matrix_or_path, backingfile = private$backing_file)
+
+                    # Track as temporary
+                    private$temp_files <- c(private$temp_files, private$backing_file)
                     obj <- bigsnpr::snp_attach(rds_file)
                     self$geno <- obj$genotypes
                 } else if (ext == "csv" || ext == "txt") {
@@ -117,16 +130,21 @@ HaploObject <- R6::R6Class("HaploObject",
                     private$read_csv_genotypes(matrix_or_path)
                 } else if (ext == "rds") {
                     # Bigstatsr/Bigsnpr RDS
-                    obj <- bigsnpr::snp_attach(matrix_or_path)
+                    # Use readRDS to inspect object type first
+                    obj <- tryCatch(readRDS(matrix_or_path), error = function(e) stop("Failed to read RDS: ", e$message))
+
                     if (inherits(obj, "bigSNP")) {
+                        # Logic for bigSNP (re-attach)
+                        # We can use snp_attach if we know it's a bigSNP, or just use the object if readRDS worked.
+                        # identifying if backing file needs re-attaching:
+                        obj <- bigsnpr::snp_attach(matrix_or_path)
                         self$geno <- obj$genotypes
                         if (!is.null(obj$fam$sample.ID)) self$sample_ids <- obj$fam$sample.ID
+                    } else if (inherits(obj, "FBM")) {
+                        # It is an FBM
+                        self$geno <- obj
                     } else {
-                        if (file.exists(paste0(matrix_or_path, ".bk"))) {
-                            self$geno <- bigstatsr::big_attach(paste0(matrix_or_path, ".rds"))
-                        } else {
-                            stop("Unsupported file format or backing file not found.")
-                        }
+                        stop("RDS file does not contain a bigSNP or FBM object.")
                     }
                 } else {
                     stop("File not found: ", matrix_or_path)
@@ -266,6 +284,10 @@ HaploObject <- R6::R6Class("HaploObject",
                 progressr::with_progress({
                     p <- progressr::progressor(steps = n_markers)
 
+                    # GC Counter
+                    gc_counter <- 0
+
+
                     while (current_idx <= n_markers) {
                         # Determine search horizon
                         limit_idx <- min(current_idx + window_size, n_markers)
@@ -344,6 +366,10 @@ HaploObject <- R6::R6Class("HaploObject",
                         step_size <- final_end - current_idx + 1
                         p(amount = step_size)
                         current_idx <- final_end + 1
+
+                        # Explicit GC every 100 iterations to prevent memory creep
+                        gc_counter <- gc_counter + 1
+                        if (gc_counter %% 100 == 0) gc()
                     }
                 })
             } else {
@@ -436,6 +462,14 @@ HaploObject <- R6::R6Class("HaploObject",
             u_hat <- (raw_u - center * sum_alpha) / scale
 
             self$marker_effects <- as.vector(u_hat)
+
+            # Store model info for PVE adjustment
+            self$model_info <- list(
+                lambda = lambda,
+                p = length(ind_col), # Number of effective markers
+                n = n
+            )
+
             message("Marker effects estimated.")
         },
         #' @description
@@ -645,7 +679,13 @@ HaploObject <- R6::R6Class("HaploObject",
         #' Calculate Percent Variance Explained (PVE) by each block.
         #' Computes r^2 between local GEBVs and phenotypes.
         #' @return Updated significance table.
-        calculate_pve = function() {
+        #' @description
+        #' Calculate Percent Variance Explained (PVE) by each block.
+        #' Computes r^2 between local GEBVs and phenotypes.
+        #' Optionally applies "Marker-Out" correction (de-regression) using model parameters.
+        #' @param adjust Logical. If TRUE, applies correction factor using lambda/p.
+        #' @return Updated significance table.
+        calculate_pve = function(adjust = TRUE) {
             if (is.null(self$local_gebv)) stop("Local GEBVs not calculated.")
             if (is.null(self$pheno)) stop("Phenotypes not loaded.")
 
@@ -678,6 +718,23 @@ HaploObject <- R6::R6Class("HaploObject",
             }
 
             self$significance$PVE <- r2
+
+            # Apply Marker-Out Adjustment if requested and model_info exists
+            if (adjust) {
+                if (!is.null(self$model_info)) {
+                    lambda <- self$model_info$lambda
+                    p <- self$model_info$p
+                    # Heuristic Correction: PVE_adj = PVE * (1 + lambda/p)
+                    # This accounts for the shrinkage bias 1/(1+lambda/p)
+                    correction <- 1 + lambda / p
+                    message("Applying 'Marker-Out' adjustment (Correction Factor: ", round(correction, 3), ")")
+                    self$significance$PVE_Adj <- r2 * correction
+                } else {
+                    warning("Model info (lambda) not found. Skipping PVE adjustment. Run estimate_marker_effects first.")
+                    self$significance$PVE_Adj <- r2
+                }
+            }
+
             return(self$significance)
         },
         #' @description
@@ -1004,67 +1061,12 @@ HaploObject <- R6::R6Class("HaploObject",
             ))
         },
         #' @description
-        #' Plot Manhattan plot of local GEBV significance.
-        #' @param threshold Significance threshold (p-value).
-        plot_manhattan = function(threshold = 0.05) {
-            if (is.null(self$significance)) stop("Significance testing not run.")
+        #' @param type "significance" (default) or "pve".
+        #' @param threshold Significance threshold (p-value for significance, unused for PVE normally).
+        #' @param interactive If TRUE, allows clicking on plot to identify blocks.
+        #' @return Vector of selected block IDs if interactive=TRUE, else NULL.
+        plot_manhattan = function(type = "significance", threshold = 0.05, interactive = FALSE, ...) {
             if (is.null(self$blocks)) stop("Blocks not defined.")
-
-            # Prepare data for plotting
-            df <- data.frame(
-                Block = self$blocks$BlockID,
-                Start = self$blocks$Start,
-                End = self$blocks$End,
-                P_Value = self$significance$P_Value
-            )
-
-            # Calculate midpoint for plotting
-            df$Pos <- (df$Start + df$End) / 2
-
-            # Log p-values
-            df$logP <- -log10(df$P_Value)
-
-            # Threshold line
-            thresh_log <- -log10(threshold)
-
-            # Determine colors
-            cols <- "black"
-            if (!is.null(self$map) && "chr" %in% names(self$map)) {
-                # Map blocks to chromosomes
-                # We need to know which chromosome each block belongs to.
-                # We can take the chromosome of the start marker of the block.
-
-                # Ensure map is loaded and has chr
-                real_start <- if (!is.null(self$active_markers)) self$active_markers[df$Start] else df$Start
-                block_chrs <- self$map$chr[real_start]
-
-                # Handle non-numeric chromosomes (e.g. "X", "Y") by converting to factor then integer
-                if (!is.numeric(block_chrs)) {
-                    block_chrs <- as.integer(as.factor(block_chrs))
-                }
-
-                # Alternating colors: black, grey
-                # 1 -> black (1), 2 -> grey (2), 3 -> black (1)...
-                # (chr %% 2) gives 1 or 0. +1 gives 2 or 1.
-                col_vec <- c("grey", "black") # 0+1=1 -> grey, 1+1=2 -> black.
-                # Usually odd=black, even=grey.
-                # If chr=1, 1%%2 = 1. index 2.
-                # If chr=2, 2%%2 = 0. index 1.
-
-                cols <- col_vec[(block_chrs %% 2) + 1]
-            }
-
-            # Base R Plot
-            plot(df$Pos, df$logP,
-                pch = 20,
-                col = cols,
-                xlab = "Genomic Position (Index)",
-                ylab = "-log10(P-value)",
-                main = "Manhattan Plot (Local GEBV)",
-                las = 1
-            )
-
-            abline(h = thresh_log, col = "red", lty = 2)
 
             # Return data invisibly instead of a plot object
             invisible(df)
@@ -1970,6 +1972,31 @@ HaploObject <- R6::R6Class("HaploObject",
         backing_file = NULL,
         # @field fa_results List to store Factor Analysis results.
         fa_results = NULL,
+        # @field temp_files List of temporary files to clean up.
+        temp_files = character(0),
+        finalize = function() {
+            # Attempt to release resources
+            self$geno <- NULL
+
+            if (length(private$temp_files) > 0) {
+                message("Cleaning up temporary backing files...")
+                for (f in private$temp_files) {
+                    if (file.exists(f)) {
+                        # Debug
+                        message("Deleting: ", f)
+                    }
+
+                    # Try deleting regardless of file.exists check to be sure
+                    # unlink handles non-existent files gracefully
+                    unlink(paste0(f, ".bk"), force = TRUE)
+                    unlink(paste0(f, ".rds"), force = TRUE)
+
+                    if (file.exists(paste0(f, ".bk"))) {
+                        warning("Failed to delete .bk file: ", f)
+                    }
+                }
+            }
+        },
 
         # Read CSV/TXT genotypes with robust parsing.
         # @param path Path to file.
