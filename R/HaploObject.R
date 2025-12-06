@@ -1053,15 +1053,151 @@ HaploObject <- R6::R6Class("HaploObject",
             ))
         },
         #' @description
-        #' @param type "significance" (default) or "pve".
-        #' @param threshold Significance threshold (p-value for significance, unused for PVE normally).
-        #' @param interactive If TRUE, allows clicking on plot to identify blocks.
-        #' @return Vector of selected block IDs if interactive=TRUE, else NULL.
-        plot_manhattan = function(type = "significance", threshold = 0.05, interactive = FALSE, ...) {
+        #' Generate a Manhattan plot of Block significance.
+        #' Uses Base R graphics to plot -log10(p-values) across block indices.
+        #' @param threshold Significance threshold line (e.g., 0.05 / n_blocks). Default is 0.05 (nominal).
+        #' @param main Title of the plot.
+        #' @param ... Additional arguments passed to plot().
+        plot_manhattan = function(threshold = 0.05, main = "Manhattan Plot of Haplotype Blocks", ...) {
+            if (is.null(self$significance)) stop("Significance not calculated. Run test_significance() first.")
+
+            df <- self$significance
+            logp <- -log10(df$P_Value)
+
+            # Setup colors: Alternating colors if we had chromosomes, but for blocks we'll highlight significant ones
+            cols <- rep("gray40", nrow(df))
+            sig_idx <- which(df$P_Value < threshold)
+            cols[sig_idx] <- "red" # Highlight significant blocks
+
+            # Base R Plot
+            plot(df$BlockID, logp,
+                type = "h", # Histogram-like vertical lines
+                col = cols,
+                lwd = 1.5,
+                xlab = "Haploblock Index",
+                ylab = expression(-log[10](italic(p))),
+                main = main,
+                ...
+            )
+
+            # Add threshold line
+            abline(h = -log10(threshold), col = "blue", lty = 2)
+
+            # Add legend
+            legend("topright",
+                legend = c("Significant", "Non-Significant"),
+                col = c("red", "gray40"), lty = 1, lwd = 1.5, bty = "n"
+            )
+        },
+
+        #' @description
+        #' Plot the Genetic Correlation Heatmap of Top Blocks.
+        #' Reconstructs the correlation matrix from latent factors (G = L L') and visualizes it.
+        #' @param ... Additional arguments passed to image().
+        plot_factor_heatmap = function(...) {
+            if (is.null(private$fa_results)) stop("Factor analysis not run. Run analyze_block_structure() first.")
+
+            # Retrieve Loadings
+            L <- private$fa_results$Loadings
+
+            # Reconstruct model-implied correlation (Common Variance)
+            # G_common = L %*% t(L)
+            G_mat <- tcrossprod(L)
+
+            # Prepare for image(): Rotate 90 degrees conceptually for visualization
+            # image() needs x, y, z.
+            n <- nrow(G_mat)
+
+            # Create a diverging palette (Blue - White - Red)
+            pal <- colorRampPalette(c("navy", "white", "firebrick"))(100)
+
+            # Fix orientation for image()
+            image(1:n, 1:n, t(G_mat)[, n:1],
+                col = pal,
+                axes = FALSE,
+                xlab = "Block Index",
+                ylab = "Block Index",
+                main = "Latent Genetic Correlations (Factors)",
+                ...
+            )
+
+            # Add box
+            box()
+        },
+
+        #' @description
+        #' Plot distribution of Haplotype Block sizes (in number of markers).
+        plot_block_sizes = function() {
             if (is.null(self$blocks)) stop("Blocks not defined.")
 
-            # Return data invisibly instead of a plot object
-            invisible(df)
+            sizes <- self$blocks$End - self$blocks$Start + 1
+
+            hist(sizes,
+                breaks = 30,
+                col = "steelblue",
+                border = "white",
+                main = "Distribution of Haplotype Block Sizes",
+                xlab = "Number of Markers per Block"
+            )
+
+            # Add median line
+            abline(v = median(sizes), col = "red", lwd = 2, lty = 2)
+            legend("topright", legend = paste("Median:", median(sizes)), col = "red", lty = 2, bty = "n")
+        },
+
+        #' @description
+        #' Visualize the Haplotype Relationship Matrix (HRM).
+        #' Useful for detecting population structure.
+        plot_hrm = function() {
+            if (is.null(self$hrm)) stop("HRM not computed. Run compute_hrm() first.")
+
+            K <- self$hrm
+
+            # Heatmap palette (Yellow-Red for relatedness)
+            pal <- colorRampPalette(c("white", "orange", "darkred"))(100)
+
+            # Image plot (flip Y to put sample 1 at top left visually if desired,
+            # standard R image puts 0,0 at bottom left)
+            image(1:nrow(K), 1:ncol(K), t(K)[, nrow(K):1],
+                col = pal,
+                axes = FALSE,
+                main = "Haplotype Relationship Matrix",
+                xlab = "Individuals",
+                ylab = "Individuals"
+            )
+
+            box()
+        },
+
+        #' @description
+        #' Volcano-style plot of Block Variance vs Significance.
+        #' Identifies high-variance, highly significant regions.
+        plot_volcano = function() {
+            if (is.null(self$significance)) stop("Significance not calculated.")
+
+            df <- self$significance
+
+            # Y axis: -log10 P-value
+            # X axis: Local Genetic Variance (Effect magnitude)
+
+            y <- -log10(df$P_Value)
+            x <- df$Variance
+
+            # Color
+            col_vec <- ifelse(y > -log10(0.05), "red", "black")
+
+            plot(x, y,
+                pch = 19,
+                col = rgb(0, 0, 0, 0.3), # Transparency
+                xlab = "Local Genetic Variance",
+                ylab = "-log10(P-Value)",
+                main = "HaploBlock Volcano Plot"
+            )
+
+            # Highlight top hits
+            top_hits <- which(y > quantile(y, 0.95))
+            points(x[top_hits], y[top_hits], col = "red", pch = 19, cex = 0.8)
+            grid()
         },
         #' @description
         #' Plot PCA of HRM.
