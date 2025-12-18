@@ -1,0 +1,74 @@
+---
+title: "End-to-End Breeding Analytics"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{End-to-End Breeding Analytics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+    collapse = TRUE,
+    comment = "#>"
+)
+```
+
+# Introduction
+
+This vignette demonstrates the **"Phenomics-to-Genomics" Pipeline**, integrating `UtilityFunctions` (Phenotypic Stability) with `HaploGeno` (Genomic Discovery).
+
+## Workflow Overview
+
+1.  **Phenotypic Analysis**: Calculate performance (OP) and stability (RMSD).
+2.  **The Bridge**: Transfer metrics to the genomic engine.
+3.  **Genomic Discovery**: Identify haplotypes driving stability.
+
+# Step 1: Phenotypic Analytics
+
+```{r pheno_step, eval=FALSE}
+library(UtilityFunctions)
+
+# Fit FA Model to MET data
+fa_model <- fit_fa_model(met_data, classify = "fa(Site, 2)")
+fa_model$fast <- calculate_fast_indices(fa_model)
+
+# Create Index
+idx_df <- calculate_mt_index(
+    list(Yield = fa_model),
+    weights = c(Yield = 1.0),
+    penalties = c(Yield = 1.5)
+)
+```
+
+# Step 2: The Bridge
+
+Use `init_from_met()` to bridge the gap.
+
+```{r bridge_step, eval=FALSE}
+library(HaploGeno)
+
+haplo <- init_from_met(
+    met_object = idx_df,
+    geno_path = "path/to/genotypes.vcf.gz",
+    trait = "Index"
+)
+print(haplo)
+```
+
+# Step 3: Haplotype Discovery
+
+```{r geno_step, eval=FALSE}
+haplo$define_haploblocks(method = "ld", r2_threshold = 0.5)
+haplo$encode_haplotypes()
+haplo$estimate_marker_effects(lambda = "auto")
+haplo$calculate_local_gebv()
+haplo$test_significance()
+```
+
+# Step 4: Visualization
+
+```{r viz_step, eval=FALSE}
+# Manhattan Plot (ggplot2)
+plot(haplo, type = "manhattan", threshold = 0.05)
+```

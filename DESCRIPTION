@@ -21,10 +21,12 @@ Imports:
     future.apply,
     bigsnpr,
     progressr,
-    MASS
+    MASS,
+    ggplot2
 Suggests:
     knitr,
     rmarkdown,
+    UtilityFunctions,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 LinkingTo: 

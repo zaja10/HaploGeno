@@ -145,3 +145,26 @@ summary.HaploObject <- function(object, ...) {
     status = status_vec
   ))
 }
+
+#' Plot method for HaploObject
+#' @param x A HaploObject
+#' @param type Character string. "manhattan" (default).
+#' @param ... Additional arguments passed to plotting methods.
+#' @export
+plot.HaploObject <- function(x, type = "manhattan", ...) {
+  if (type == "manhattan") {
+    if (!is.null(x$plot_manhattan_gg)) {
+      print(x$plot_manhattan_gg(...))
+    } else {
+      stop("plot_manhattan_gg not found in HaploObject.")
+    }
+  } else if (type == "scree") {
+    x$plot_scree(...)
+  } else if (type == "profile") {
+    x$plot_haplo_profile(...)
+  } else if (type == "stacking") {
+    x$plot_stacking_trend(...)
+  } else {
+    stop("Unknown plot type. Options: 'manhattan', 'scree', 'profile', 'stacking'.")
+  }
+}

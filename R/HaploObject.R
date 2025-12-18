@@ -405,62 +405,62 @@ HaploObject <- R6::R6Class("HaploObject",
             n <- nrow(self$geno)
             p <- ncol(self$geno)
             y <- self$pheno
-            
+
             # --- Auto-Lambda Estimation (Grid Search CV) ---
             if (is.character(lambda) && lambda == "auto") {
                 message("Optimizing regularization parameter (Lambda) via 5-Fold Cross-Validation...")
-                
+
                 # Grid of candidate lambdas (log10 scale)
                 # Lambda represents Noise Variance / Genetic Variance ratio
                 # Typical range: 1e-4 (High Heritability) to 1e3 (Low Heritability)
                 cand_lambdas <- 10^seq(-3, 3, by = 0.5)
-                
+
                 # Setup CV
                 k_folds <- 5
                 folds <- cut(seq(1, n), breaks = k_folds, labels = FALSE)
-                
+
                 # Need K matrix for CV speed (Kernel Ridge CV is O(N^3))
                 # Compute K once
                 ind_col <- if (!is.null(self$active_markers)) self$active_markers else bigstatsr::cols_along(self$geno)
-                
+
                 # Check for monomorphic markers first to avoid errors
                 stats_check <- bigstatsr::big_colstats(self$geno, ind.col = ind_col)
                 keep_bool <- stats_check$var > 1e-8
                 if (!all(keep_bool)) {
-                     ind_col <- ind_col[keep_bool]
-                     self$active_markers <- ind_col
+                    ind_col <- ind_col[keep_bool]
+                    self$active_markers <- ind_col
                 }
-                
+
                 message("Computing GRM for CV steps...")
                 K_full <- bigstatsr::big_tcrossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = ind_col)
                 K_full <- K_full[] / length(ind_col) # Normalize
-                
+
                 I <- diag(n)
                 cv_errors <- numeric(length(cand_lambdas))
-                
+
                 # Simple loop for now (could parallelize but N might be small enough)
                 # Actually, for N=1000, N^3 is 1e9 ops. Parallelization helps.
                 # Use future if plan is set.
-                
+
                 progressr::with_progress({
                     p_prog <- progressr::progressor(steps = length(cand_lambdas))
-                    
+
                     mse_list <- future.apply::future_lapply(cand_lambdas, function(lam) {
                         p_prog()
                         err_sum <- 0
                         for (k in 1:k_folds) {
                             idx_val <- which(folds == k)
                             idx_trn <- which(folds != k)
-                            
+
                             K_trn <- K_full[idx_trn, idx_trn]
                             K_val_trn <- K_full[idx_val, idx_trn]
                             y_trn <- y[idx_trn]
                             y_val <- y[idx_val]
-                            
+
                             # Train
                             # alpha = (K + lambda*I)^-1 y
                             alpha <- solve(K_trn + lam * diag(length(idx_trn)), y_trn)
-                            
+
                             # Predict
                             y_pred <- K_val_trn %*% alpha
                             err_sum <- err_sum + sum((y_val - y_pred)^2)
@@ -468,11 +468,11 @@ HaploObject <- R6::R6Class("HaploObject",
                         return(err_sum / n)
                     }, future.seed = TRUE)
                 })
-                
+
                 cv_errors <- unlist(mse_list)
                 best_idx <- which.min(cv_errors)
                 lambda <- cand_lambdas[best_idx]
-                
+
                 message("Optimal Lambda selected: ", round(lambda, 5), " (MSE: ", round(min(cv_errors), 4), ")")
             }
 
@@ -713,72 +713,72 @@ HaploObject <- R6::R6Class("HaploObject",
             # 2. Re-calculate Marker Effects (Fast Approximation)
             # 3. Calculate Null Local GEBV Variances
             # 4. Compare Observed Variance to Null Distribution
-            
+
             # Since full permutation is expensive (re-running ridge), we use a heuristic.
             # Under null, marker effects should be unstructured noise scaled by lambda.
-            
+
             # Robust Approach:
             # Run 5 permutations of Y. For each, calculate effects, compute var(GEBV) for a random subset of blocks (e.g. 50).
             # Build a null distribution of Variances.
-            
+
             n_perms <- 10
             n_null_blocks <- min(50, nrow(self$blocks))
             null_vars <- numeric(n_perms * n_null_blocks)
-            
+
             # Helper to get fast variances
             # Pre-calc scaling
             ind_col <- if (!is.null(self$active_markers)) self$active_markers else bigstatsr::cols_along(self$geno)
             stats <- bigstatsr::big_scale()(self$geno, ind.col = ind_col)
             mus <- stats$center
             sigmas <- stats$scale
-            
+
             # Pre-calc K for fast solving?
             # If we already have K from estimate_marker_effects, reuse it?
             # It's not stored. But we can quickly recompute K if N is small.
             # If N is large, this is slow.
-            
+
             # Optimization: If K was used, maybe store it temporarily?
             # For now, let's assume N is manageable or pay the compute cost.
             # Recomputing K ...
-            
+
             n <- nrow(self$geno)
             K <- bigstatsr::big_tcrossprodSelf(self$geno, fun.scaling = bigstatsr::big_scale(), ind.col = ind_col)
             K <- K[] / length(ind_col)
-            
-            lambda <- if(!is.null(self$model_info$lambda)) self$model_info$lambda else 1.0
+
+            lambda <- if (!is.null(self$model_info$lambda)) self$model_info$lambda else 1.0
             I <- diag(n)
             Ki <- solve(K + lambda * I) # Invert once? No, permutations change Y, not K.
-            
+
             # Wait, solve(A, y). If A is constant (K + lambda I), we can invert A once.
             # Then alpha = A_inv %*% y_perm
-            
+
             message("Generating Null Distribution (", n_perms, " permutations)...")
-            
+
             counter <- 1
-            for(i in 1:n_perms) {
+            for (i in 1:n_perms) {
                 y_perm <- sample(self$pheno)
                 alpha_perm <- Ki %*% y_perm
-                
+
                 # Back-calc effects (u = Z' alpha)
                 # Only need effects for the random blocks
-                
+
                 # Sample random blocks
                 rand_blk_ids <- sample(1:nrow(self$blocks), n_null_blocks)
-                
-                for(b_id in rand_blk_ids) {
+
+                for (b_id in rand_blk_ids) {
                     start <- self$blocks$Start[b_id]
                     end <- self$blocks$End[b_id]
                     indices <- start:end # Relative to start if active map used?
-                    
+
                     # Mapping logic (same as calculate_local_gebv)
-                     if (!is.null(self$active_markers)) {
+                    if (!is.null(self$active_markers)) {
                         rel_indices <- indices
                         abs_indices <- self$active_markers[rel_indices]
-                        
+
                         raw_u <- bigstatsr::big_cprodVec(self$geno, alpha_perm, ind.col = abs_indices)
                         sum_alpha <- sum(alpha_perm)
                         u_hat <- (raw_u - mus[rel_indices] * sum_alpha) / sigmas[rel_indices]
-                        
+
                         # Compute GEBV
                         weights <- u_hat / sigmas[rel_indices]
                         offset <- sum(mus[rel_indices] * weights)
@@ -787,29 +787,29 @@ HaploObject <- R6::R6Class("HaploObject",
                         raw_u <- bigstatsr::big_cprodVec(self$geno, alpha_perm, ind.col = indices)
                         sum_alpha <- sum(alpha_perm)
                         u_hat <- (raw_u - mus[indices] * sum_alpha) / sigmas[indices]
-                        
+
                         weights <- u_hat / sigmas[indices]
                         offset <- sum(mus[indices] * weights)
                         gebv <- bigstatsr::big_prodVec(self$geno, weights, ind.col = indices) - offset
                     }
-                    
+
                     null_vars[counter] <- var(gebv)
                     counter <- counter + 1
                 }
             }
-            
+
             # Compute P-values
             # P = (Number of Null Vars >= Observed Var) / Total Null
             # This is a bit coarse if null_vars is small.
             # Alternate: Fit a distribution (Gamma?) to null vars and get tail prob.
-            
+
             # Simply use rank for now.
             obs_vars <- self$local_gebv$variances
-            
+
             # ECDF
             null_ecdf <- ecdf(null_vars)
             p_values <- 1 - null_ecdf(obs_vars)
-            
+
             # Correction: Ensure no exactly 0 p-values for log plots
             min_p <- 1 / (length(null_vars) + 1)
             p_values[p_values == 0] <- min_p
@@ -1683,11 +1683,10 @@ HaploObject <- R6::R6Class("HaploObject",
                         self$geno[, ind] <- chunk
                     }
                 }
-                }
             } else if (method == "expectation") {
                 # Expectation logic: Same as mean but DO NOT ROUND.
                 # This preserves dosage/variance for LD calculations.
-                
+
                 n_markers <- ncol(self$geno)
                 block_size <- 1000
 
@@ -2025,6 +2024,83 @@ HaploObject <- R6::R6Class("HaploObject",
             }
 
             invisible(list(scores = pc_scores, loadings = loadings))
+        },
+        #' @description
+        #' Plot Manhattan Plot of Haplotype Blocks (ggplot2 version).
+        #' @param threshold Significance threshold (p-value, default 0.05).
+        #' @return A ggplot object.
+        plot_manhattan_gg = function(threshold = 0.05) {
+            # Check requirements
+            if (is.null(self$significance)) stop("Significance not calculated. Run test_significance() first.")
+            if (!requireNamespace("ggplot2", quietly = TRUE)) stop("ggplot2 is required for this plot.")
+
+            # Prepare data
+            df <- self$significance
+            df$logP <- -log10(df$P_Value)
+            df$Significant <- df$P_Value < threshold
+
+            # Determine positions for X axis
+            # Use geometric center of block if map available, else BlockID
+            if (!is.null(self$blocks) && !is.null(self$map) && "pos" %in% names(self$map)) {
+                # Calculate block centers
+                starts <- self$blocks$Start
+                ends <- self$blocks$End
+
+                # Careful with mapping active indices
+                if (!is.null(self$active_markers)) {
+                    starts <- self$active_markers[starts]
+                    ends <- self$active_markers[ends]
+                }
+
+                pos_start <- self$map$pos[starts]
+                pos_end <- self$map$pos[ends]
+
+                df$Pos <- (pos_start + pos_end) / 2
+
+                # If multi-chromosome, we need cumulative position
+                if ("chr" %in% names(self$map)) {
+                    df$Chr <- self$map$chr[starts]
+                    # Simple facet approach?
+                } else {
+                    df$Chr <- 1
+                }
+
+                x_label <- "Genomic Position"
+                x_col <- "Pos"
+            } else {
+                df$Pos <- df$BlockID
+                df$Chr <- 1
+                x_label <- "Haploblock Index"
+                x_col <- "BlockID"
+            }
+
+            # Create Plot
+            p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[x_col]], y = logP)) +
+                ggplot2::geom_segment(ggplot2::aes(xend = .data[[x_col]], yend = 0, color = Significant), alpha = 0.5) + # Lollipop stem
+                ggplot2::geom_point(ggplot2::aes(color = Significant), size = 2) +
+                ggplot2::scale_color_manual(values = c("gray70", "#e74c3c")) +
+                ggplot2::geom_hline(yintercept = -log10(threshold), linetype = "dashed", color = "blue", linewidth = 0.5) +
+                ggplot2::labs(
+                    title = "Haplotype Block Significance",
+                    subtitle = "Genomic Architecture",
+                    x = x_label,
+                    y = expression(-log[10](italic(p)))
+                )
+
+            # Apply Theme
+            if (exists("theme_genetics", where = asNamespace("UtilityFunctions"), mode = "function")) {
+                p <- p + UtilityFunctions::theme_genetics()
+            } else {
+                p <- p + ggplot2::theme_minimal() +
+                    ggplot2::theme(legend.position = "bottom")
+            }
+
+            # Facet if multiple chromosomes
+            if (length(unique(df$Chr)) > 1) {
+                p <- p + ggplot2::facet_grid(. ~ Chr, scales = "free_x", space = "free_x")
+            }
+
+            return(p)
         },
         #' @description
         #' Plot Factor Analysis Results (Stacked Manhattan Plots).
