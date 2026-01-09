@@ -153,11 +153,8 @@ summary.HaploObject <- function(object, ...) {
 #' @export
 plot.HaploObject <- function(x, type = "manhattan", ...) {
   if (type == "manhattan") {
-    if (!is.null(x$plot_manhattan_gg)) {
-      print(x$plot_manhattan_gg(...))
-    } else {
-      stop("plot_manhattan_gg not found in HaploObject.")
-    }
+    # New plot_manhattan returns a ggplot object
+    print(x$plot_manhattan(...))
   } else if (type == "scree") {
     x$plot_scree(...)
   } else if (type == "profile") {

@@ -4,13 +4,13 @@
 using namespace Rcpp;
 
 //' Encode Haplotypes (Optimized)
- //'
- //' Maps unique rows of a genotype matrix to integers without string conversion.
- //'
- //' @param mat A numeric matrix of genotypes (0, 1, 2).
- //' @return Integer vector of haplotype IDs.
- //' @export
- // [[Rcpp::export]]
+//'
+//' Maps unique rows of a genotype matrix to integers without string conversion.
+//'
+//' @param mat A numeric matrix of genotypes (0, 1, 2).
+//' @return Integer vector of haplotype IDs.
+//' @export
+// [[Rcpp::export]]
  IntegerVector encode_block_fast(NumericMatrix mat) {
    int n = mat.nrow();
    int m = mat.ncol();

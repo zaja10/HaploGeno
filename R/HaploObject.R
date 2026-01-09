@@ -970,7 +970,7 @@ HaploObject <- R6::R6Class("HaploObject",
                 UseCovariance = use_covariance
             )
             message("Factor Analysis (MLE) complete.")
-        }, ,
+        },
         #' @description
         #' Reconstruct model-implied correlation matrix from FA results.
         #' G_smooth = Loadings %*% t(Loadings) + diag(SpecificVar)
@@ -1200,89 +1200,15 @@ HaploObject <- R6::R6Class("HaploObject",
                 mse = mses
             ))
         },
-        #' @description
-        #' Generate a Manhattan plot of Block significance.
-        #' Uses Base R graphics to plot -log10(p-values) across block indices.
-        #' @param threshold Significance threshold line (e.g., 0.05 / n_blocks). Default is 0.05 (nominal).
-        #' @param main Title of the plot.
-        #' @param ... Additional arguments passed to plot().
-        plot_manhattan = function(threshold = 0.05, main = "Manhattan Plot of Haplotype Blocks", type = "manhattan", ...) {
-            if (is.null(self$significance)) stop("Significance not calculated. Run test_significance() first.")
 
-            df <- self$significance
-            logp <- -log10(df$P_Value)
 
-            # Setup colors: Alternating colors if we had chromosomes, but for blocks we'll highlight significant ones
-            cols <- rep("gray40", nrow(df))
-            sig_idx <- which(df$P_Value < threshold)
-            cols[sig_idx] <- "red" # Highlight significant blocks
-
-            # Determine what to plot based on type
-            if (type == "pve" || type == "PVE") {
-                if ("PVE_Adj" %in% names(df)) {
-                    val <- df$PVE_Adj
-                    ylab_text <- "Marginal PVE (Adjusted)"
-                } else {
-                    val <- df$PVE
-                    ylab_text <- "Marginal PVE"
-                }
-                main_text <- "Manhattan Plot of Marginal PVE"
-            } else {
-                # Standard Manhattan (-log10 P)
-                val <- logp
-                ylab_text <- expression(-log[10](italic(p)))
-                main_text <- main
-            }
-
-            # Capture ... args to prevent clash
-            dots <- list(...)
-            # Remove 'type' from dots if it exists (though we captured it as arg, safe redundancy)
-            dots$type <- NULL
-
-            # Base R Plot
-            # We construct the call explicitly to avoid passing 'type' in ...
-            # Actually, plot.default has a 'type' argument (e.g. "p", "l", "h").
-            # The USER passed type="pve" to US, but plot() expects type="h" (histogram/needle).
-            # So we must NOT pass the user's 'type' to plot().
-            # We hardcode type="h" for Manhattan plots.
-
-            do.call(plot, c(list(
-                x = df$BlockID,
-                y = val,
-                type = "h", # Histogram-like vertical lines
-                col = cols,
-                lwd = 1.5,
-                xlab = "Haploblock Index",
-                ylab = ylab_text,
-                main = main_text
-            ), dots))
-
-            # Add threshold line if using P-values
-            if (type != "pve" && type != "PVE") {
-                abline(h = -log10(threshold), col = "blue", lty = 2)
-            }
-
-            # Add legend
-            legend("topright",
-                legend = c("Significant", "Non-Significant"),
-                col = c("red", "gray40"), lty = 1, lwd = 1.5, bty = "n"
-            )
-        },
-
-        #' @description
         #' Plot the Genetic Correlation Heatmap of Top Blocks.
         #' Reconstructs the correlation matrix from latent factors (G = L L') and visualizes it.
-        #' @param ... Additional arguments passed to image().
-        #' @description
-        #' Plot the Genetic Correlation Heatmap of Top Blocks.
-        #' Reconstructs the correlation matrix from latent factors (Sigma = L L' + Psi) and visualizes it.
         #' @param subset_indices Vector of block indices (integer) to plot. If NULL, plots all analyzed blocks.
         #' @param show_values Logical. If TRUE, overlay the correlation values.
         #' @param label_axes Logical. If TRUE, label the axes with block indices.
         #' @param ... Additional arguments passed to image().
         plot_factor_heatmap = function(subset_indices = NULL, show_values = FALSE, label_axes = TRUE, ...) {
-            if (is.null(private$fa_results)) stop("Factor analysis not run. Run analyze_block_structure() first.")
-
             L <- private$fa_results$Loadings
             Psi <- private$fa_results$SpecificVar
             block_ids_all <- private$fa_results$BlockIndices
@@ -1487,7 +1413,7 @@ HaploObject <- R6::R6Class("HaploObject",
             )
 
             if (!is.null(groups)) {
-                legend("topright", legend = levels(groups), col = 1:length(levels(groups)), pch = 19)
+                legend("topright", legend = levels(groups), col = seq_along(levels(groups)), pch = 19)
             }
         },
         #' @description
@@ -1651,64 +1577,29 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @description
         #' Impute missing genotypes.
         #' @param method Imputation method. "expectation" (default, recommended) replaces NAs with column means without rounding. "mean" rounds to integers but may distort LD.
-        impute_genotypes = function(method = "expectation") {
+        impute_genotypes = function(method = "mean") {
             if (is.null(self$geno)) stop("Genotypes not loaded.")
 
-            message("Imputing missing genotypes (method=", method, ")...")
+            if (inherits(self$geno, "FBM.code256")) {
+                message("Running bigsnpr::snp_fastImputeSimple (method=", method, ")...")
 
-            if (method == "mean") {
-                warning("Method 'mean' rounds imputed values to integers, which may distort LD structure. Use 'expectation' to preserve dosage.")
-                n_markers <- ncol(self$geno)
-                block_size <- 1000
+                bs_method <- switch(method,
+                    "mean" = "mean2",
+                    "expectation" = "mean2",
+                    "mode" = "mode",
+                    "random" = "random",
+                    "mode"
+                )
 
-                for (i in seq(1, n_markers, by = block_size)) {
-                    ind <- i:min(i + block_size - 1, n_markers)
-
-                    # Read chunk
-                    chunk <- self$geno[, ind]
-
-                    # Impute in memory
-                    if (any(is.na(chunk))) {
-                        # Column means
-                        mus <- colMeans(chunk, na.rm = TRUE)
-
-                        for (j in 1:ncol(chunk)) {
-                            if (any(is.na(chunk[, j]))) {
-                                # Round to nearest integer (0, 1, 2)
-                                chunk[is.na(chunk[, j]), j] <- round(mus[j])
-                            }
-                        }
-
-                        # Write back
-                        self$geno[, ind] <- chunk
-                    }
+                if (method == "expectation") {
+                    warning("Method 'expectation' (dosage) is not fully supported for code256 objects. Using 'mean2' (rounded mean).")
                 }
-            } else if (method == "expectation") {
-                # Expectation logic: Same as mean but DO NOT ROUND.
-                # This preserves dosage/variance for LD calculations.
 
-                n_markers <- ncol(self$geno)
-                block_size <- 1000
-
-                for (i in seq(1, n_markers, by = block_size)) {
-                    ind <- i:min(i + block_size - 1, n_markers)
-                    chunk <- self$geno[, ind]
-
-                    if (any(is.na(chunk))) {
-                        mus <- colMeans(chunk, na.rm = TRUE)
-                        for (j in 1:ncol(chunk)) {
-                            if (any(is.na(chunk[, j]))) {
-                                chunk[is.na(chunk[, j]), j] <- mus[j]
-                            }
-                        }
-                        self$geno[, ind] <- chunk
-                    }
-                }
+                self$geno <- bigsnpr::snp_fastImputeSimple(self$geno, method = bs_method)
+                message("Imputation complete.")
             } else {
-                stop("Supported methods: 'mean', 'expectation'.")
+                stop("Automated imputation is only supported for PLINK/VCF (code256) sources. Please impute numeric matrices before import.")
             }
-
-            message("Imputation complete.")
         },
 
         #' @description
@@ -2028,16 +1919,49 @@ HaploObject <- R6::R6Class("HaploObject",
         #' @description
         #' Plot Manhattan Plot of Haplotype Blocks (ggplot2 version).
         #' @param threshold Significance threshold (p-value, default 0.05).
+        #' @param main Title of the plot.
+        #' @param type Plot type ("manhattan" or "pve").
+        #' @param ... Additional arguments.
         #' @return A ggplot object.
-        plot_manhattan_gg = function(threshold = 0.05) {
+        plot_manhattan = function(threshold = 0.05, main = "Haplotype Block Significance", type = "manhattan", ...) {
             # Check requirements
             if (is.null(self$significance)) stop("Significance not calculated. Run test_significance() first.")
             if (!requireNamespace("ggplot2", quietly = TRUE)) stop("ggplot2 is required for this plot.")
 
             # Prepare data
             df <- self$significance
-            df$logP <- -log10(df$P_Value)
-            df$Significant <- df$P_Value < threshold
+
+            # Handle Type (Manhattan vs PVE)
+            if (type == "pve" || type == "PVE") {
+                if ("PVE_Adj" %in% names(df)) {
+                    df$Val <- df$PVE_Adj
+                    y_lab <- "Marginal PVE (Adjusted)"
+                    default_title <- "Analysis of Marginal PVE"
+                } else {
+                    df$Val <- df$PVE
+                    y_lab <- "Marginal PVE"
+                    default_title <- "Analysis of Marginal PVE"
+                }
+                # For PVE, 'Significance' might be defined differently or just highlight same p-value
+                df$Significant <- df$P_Value < threshold
+            } else {
+                # Standard Manhattan
+                df$Val <- -log10(df$P_Value)
+                y_lab <- expression(-log[10](italic(p)))
+                df$Significant <- df$P_Value < threshold
+                default_title <- "Haplotype Block Significance"
+            }
+
+            # Use user title if provided, else default
+            # (Note: 'main' has a default in signature, but we might want to be smart about it)
+            # If user passed default "Haplotype Block Significance" but asked for PVE, we should probably update it?
+            # But strictly, the signature has default "Haplotype Block Significance".
+            # If type=PVE and main is default, switch it?
+            if (main == "Haplotype Block Significance" && (type == "pve" || type == "PVE")) {
+                plot_title <- default_title
+            } else {
+                plot_title <- main
+            }
 
             # Determine positions for X axis
             # Use geometric center of block if map available, else BlockID
@@ -2075,17 +1999,21 @@ HaploObject <- R6::R6Class("HaploObject",
             }
 
             # Create Plot
-            p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[x_col]], y = logP)) +
+            p <- ggplot2::ggplot(df, ggplot2::aes(x = .data[[x_col]], y = Val)) +
                 ggplot2::geom_segment(ggplot2::aes(xend = .data[[x_col]], yend = 0, color = Significant), alpha = 0.5) + # Lollipop stem
                 ggplot2::geom_point(ggplot2::aes(color = Significant), size = 2) +
                 ggplot2::scale_color_manual(values = c("gray70", "#e74c3c")) +
-                ggplot2::geom_hline(yintercept = -log10(threshold), linetype = "dashed", color = "blue", linewidth = 0.5) +
                 ggplot2::labs(
-                    title = "Haplotype Block Significance",
+                    title = plot_title,
                     subtitle = "Genomic Architecture",
                     x = x_label,
-                    y = expression(-log[10](italic(p)))
+                    y = y_lab
                 )
+
+            # Add threshold line only for Manhattan
+            if (type != "pve" && type != "PVE") {
+                p <- p + ggplot2::geom_hline(yintercept = -log10(threshold), linetype = "dashed", color = "blue", linewidth = 0.5)
+            }
 
             # Apply Theme
             if (exists("theme_genetics", where = asNamespace("UtilityFunctions"), mode = "function")) {
@@ -2532,10 +2460,33 @@ HaploObject <- R6::R6Class("HaploObject",
             # Convert to matrix
             mat <- as.matrix(dt)
 
+            # Robust Validation: Ensure values are 0/1/2 or NA
+            valid_vals <- c(0, 1, 2, NA)
+            # Efficient check on unique values if matrix isn't massive, or sample check
+            # For correctness, we should check everything.
+
+            # Identify invalid elements
+            # Using is.element on vector is fast enough for moderate data
+            if (!all(mat %in% valid_vals)) {
+                # Find what's wrong
+                unique_vals <- unique(as.vector(mat))
+                invalid <- setdiff(unique_vals, valid_vals)
+                stop(
+                    "Imported genotype matrix contains invalid values: ", paste(head(invalid, 5), collapse = ", "),
+                    ". Expected 0, 1, 2, or NA."
+                )
+            }
+
             # Check for NAs and warn
             n_na <- sum(is.na(mat))
             if (n_na > 0) {
-                warning("Imported matrix contains ", n_na, " missing values (NA). Imputation may be needed.")
+                # If we assume imputed data (CSV), this is bad.
+                # User should impute upstream.
+                warning(
+                    "Imported matrix contains ", n_na, " missing values (NA). ",
+                    "Automated imputation is NOT available for CSV imports. ",
+                    "Please impute missing data upstream or use PLINK/VCF formats."
+                )
             }
 
             message("Converting to FBM...")

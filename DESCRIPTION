@@ -8,9 +8,8 @@ Description: Implements a high-performance framework for haplotype-based genomic
     Leverages file-backed matrices via 'bigstatsr' to handle large-scale genomic datasets efficiently. 
     Key features include LD-based haplotype block construction, kernel ridge regression (KRR) for genomic prediction, 
     and local genomic estimated breeding value (GEBV) analysis for identifying significant genomic regions.
-License: MIT
+License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
 Imports:
     R6,
     bigstatsr,

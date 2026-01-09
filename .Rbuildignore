@@ -1,2 +1,10 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^setup_env\.R$
+^data-raw$
+^benchmarks$
+^CONTRIBUTING\.md$
+^HaploGeno_Function_Reference\.md$
+^debug_.*\.R$
+^verify_.*\.R$
+^Makevars\.local$

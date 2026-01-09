@@ -59,7 +59,10 @@ HaploObject Class
 \item \href{#method-HaploObject-compute_hrm}{\code{HaploObject$compute_hrm()}}
 \item \href{#method-HaploObject-fit_krr}{\code{HaploObject$fit_krr()}}
 \item \href{#method-HaploObject-cross_validate}{\code{HaploObject$cross_validate()}}
-\item \href{#method-HaploObject-plot_manhattan}{\code{HaploObject$plot_manhattan()}}
+\item \href{#method-HaploObject-plot_factor_heatmap}{\code{HaploObject$plot_factor_heatmap()}}
+\item \href{#method-HaploObject-plot_block_sizes}{\code{HaploObject$plot_block_sizes()}}
+\item \href{#method-HaploObject-plot_hrm}{\code{HaploObject$plot_hrm()}}
+\item \href{#method-HaploObject-plot_volcano}{\code{HaploObject$plot_volcano()}}
 \item \href{#method-HaploObject-plot_pca}{\code{HaploObject$plot_pca()}}
 \item \href{#method-HaploObject-plot_gebv_image}{\code{HaploObject$plot_gebv_image()}}
 \item \href{#method-HaploObject-identify_superior_haplotypes}{\code{HaploObject$identify_superior_haplotypes()}}
@@ -71,6 +74,7 @@ HaploObject Class
 \item \href{#method-HaploObject-scale_haplo_effects}{\code{HaploObject$scale_haplo_effects()}}
 \item \href{#method-HaploObject-analyze_hoi}{\code{HaploObject$analyze_hoi()}}
 \item \href{#method-HaploObject-plot_haplo_biplot}{\code{HaploObject$plot_haplo_biplot()}}
+\item \href{#method-HaploObject-plot_manhattan}{\code{HaploObject$plot_manhattan()}}
 \item \href{#method-HaploObject-plot_fa_genome}{\code{HaploObject$plot_fa_genome()}}
 \item \href{#method-HaploObject-plot_communality}{\code{HaploObject$plot_communality()}}
 \item \href{#method-HaploObject-plot_scree}{\code{HaploObject$plot_scree()}}
@@ -212,13 +216,13 @@ Optimized to run O(N) instead of O(N^2) for LD scanning.
 \subsection{Method \code{estimate_marker_effects()}}{
 Estimate marker effects using Ridge Regression.
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$estimate_marker_effects(lambda = 1)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$estimate_marker_effects(lambda = "auto")}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{lambda}}{Regularization parameter.}
+\item{\code{lambda}}{Regularization parameter. Can be a numeric value or "auto" (default) to estimate optimal lambda via Cross-Validation.}
 }
 \if{html}{\out{</div>}}
 }
@@ -279,6 +283,7 @@ Get marker names for a specific block.
 \if{latex}{\out{\hypertarget{method-HaploObject-test_significance}{}}}
 \subsection{Method \code{test_significance()}}{
 Test significance of local GEBVs.
+Uses an Empirical Permutation Test to determine significance thresholds.
 \subsection{Usage}{
 \if{html}{\out{<div class="r">}}\preformatted{HaploObject$test_significance()}\if{html}{\out{</div>}}
 }
@@ -291,11 +296,7 @@ Data.table of p-values.
 \if{html}{\out{<a id="method-HaploObject-calculate_pve"></a>}}
 \if{latex}{\out{\hypertarget{method-HaploObject-calculate_pve}{}}}
 \subsection{Method \code{calculate_pve()}}{
-Calculate Percent Variance Explained (PVE) by each block.
-Computes r^2 between local GEBVs and phenotypes.
-
-
-Calculate Percent Variance Explained (PVE) by each block.
+Calculate Percent Variance Explained (Marginal PVE) by each block.
 Computes r^2 between local GEBVs and phenotypes.
 Optionally applies "Marker-Out" correction (de-regression) using model parameters.
 \subsection{Usage}{
@@ -318,9 +319,13 @@ Updated significance table.
 \if{latex}{\out{\hypertarget{method-HaploObject-analyze_block_structure}{}}}
 \subsection{Method \code{analyze_block_structure()}}{
 Analyze block structure using internal Factor Analysis (Latent Regression).
-Models Local GEBVs as function of latent genomic gradients.
+Models Local GEBVs as function of latent genomic gradients using Maximum Likelihood Estimation (MLE).
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$analyze_block_structure(top_n = 500, factors = 2)}\if{html}{\out{</div>}}
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$analyze_block_structure(
+  top_n = 500,
+  factors = 2,
+  use_covariance = FALSE
+)}\if{html}{\out{</div>}}
 }
 
 \subsection{Arguments}{
@@ -329,6 +334,8 @@ Models Local GEBVs as function of latent genomic gradients.
 \item{\code{top_n}}{Number of top variance blocks to use.}
 
 \item{\code{factors}}{Number of latent factors to extract.}
+
+\item{\code{use_covariance}}{Logical. If TRUE, uses the Covariance matrix (preserving magnitude). If FALSE (default), uses Correlation matrix (standardized).}
 }
 \if{html}{\out{</div>}}
 }
@@ -419,20 +426,22 @@ Cross-validate KRR model.
 
 \item{\code{n_cores}}{Number of cores to use.}
 
-\item{\code{folds}}{Optional vector of fold assignments.}
+\item{\code{folds}}{Optional vector of fold assignments.
+Plot the Genetic Correlation Heatmap of Top Blocks.
+Reconstructs the correlation matrix from latent factors (G = L L') and visualizes it.}
 }
 \if{html}{\out{</div>}}
 }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-HaploObject-plot_manhattan"></a>}}
-\if{latex}{\out{\hypertarget{method-HaploObject-plot_manhattan}{}}}
-\subsection{Method \code{plot_manhattan()}}{
+\if{html}{\out{<a id="method-HaploObject-plot_factor_heatmap"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_factor_heatmap}{}}}
+\subsection{Method \code{plot_factor_heatmap()}}{
 \subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_manhattan(
-  type = "significance",
-  threshold = 0.05,
-  interactive = FALSE,
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_factor_heatmap(
+  subset_indices = NULL,
+  show_values = FALSE,
+  label_axes = TRUE,
   ...
 )}\if{html}{\out{</div>}}
 }
@@ -440,17 +449,48 @@ Cross-validate KRR model.
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{type}}{"significance" (default) or "pve".}
+\item{\code{subset_indices}}{Vector of block indices (integer) to plot. If NULL, plots all analyzed blocks.}
 
-\item{\code{threshold}}{Significance threshold (p-value for significance, unused for PVE normally).}
+\item{\code{show_values}}{Logical. If TRUE, overlay the correlation values.}
 
-\item{\code{interactive}}{If TRUE, allows clicking on plot to identify blocks.}
+\item{\code{label_axes}}{Logical. If TRUE, label the axes with block indices.}
+
+\item{\code{...}}{Additional arguments passed to image().}
 }
 \if{html}{\out{</div>}}
 }
-\subsection{Returns}{
-Vector of selected block IDs if interactive=TRUE, else NULL.
 }
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_block_sizes"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_block_sizes}{}}}
+\subsection{Method \code{plot_block_sizes()}}{
+Plot distribution of Haplotype Block sizes (in number of markers).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_block_sizes()}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_hrm"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_hrm}{}}}
+\subsection{Method \code{plot_hrm()}}{
+Visualize the Haplotype Relationship Matrix (HRM).
+Useful for detecting population structure.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_hrm()}\if{html}{\out{</div>}}
+}
+
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_volcano"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_volcano}{}}}
+\subsection{Method \code{plot_volcano()}}{
+Volcano-style plot of Block Variance vs Significance.
+Identifies high-variance, highly significant regions.
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_volcano()}\if{html}{\out{</div>}}
+}
+
 }
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-HaploObject-plot_pca"></a>}}
@@ -551,7 +591,7 @@ Impute missing genotypes.
 \subsection{Arguments}{
 \if{html}{\out{<div class="arguments">}}
 \describe{
-\item{\code{method}}{Imputation method. Currently only "mean" is supported.}
+\item{\code{method}}{Imputation method. "expectation" (default, recommended) replaces NAs with column means without rounding. "mean" rounds to integers but may distort LD.}
 }
 \if{html}{\out{</div>}}
 }
@@ -657,6 +697,37 @@ Plots individuals based on HRM PCA and overlays vectors for high-variance haplob
 \item{\code{highlight_ind}}{Optional. Vector of sample names or indices to highlight.}
 }
 \if{html}{\out{</div>}}
+}
+}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-HaploObject-plot_manhattan"></a>}}
+\if{latex}{\out{\hypertarget{method-HaploObject-plot_manhattan}{}}}
+\subsection{Method \code{plot_manhattan()}}{
+Plot Manhattan Plot of Haplotype Blocks (ggplot2 version).
+\subsection{Usage}{
+\if{html}{\out{<div class="r">}}\preformatted{HaploObject$plot_manhattan(
+  threshold = 0.05,
+  main = "Haplotype Block Significance",
+  type = "manhattan",
+  ...
+)}\if{html}{\out{</div>}}
+}
+
+\subsection{Arguments}{
+\if{html}{\out{<div class="arguments">}}
+\describe{
+\item{\code{threshold}}{Significance threshold (p-value, default 0.05).}
+
+\item{\code{main}}{Title of the plot.}
+
+\item{\code{type}}{Plot type ("manhattan" or "pve").}
+
+\item{\code{...}}{Additional arguments.}
+}
+\if{html}{\out{</div>}}
+}
+\subsection{Returns}{
+A ggplot object.
 }
 }
 \if{html}{\out{<hr>}}

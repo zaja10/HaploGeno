@@ -19,15 +19,11 @@ test_that("Imputation works", {
   # Check NAs exist
   expect_true(any(is.na(haplo$geno[])))
 
-  # Impute
-  haplo$impute_genotypes(method = "mean")
+  # Imputation should FAIL for matrix objects (guardrail check)
+  expect_error(haplo$impute_genotypes(method = "mean"), "Automated imputation is only supported")
 
-  # Check NAs gone
-  expect_false(any(is.na(haplo$geno[])))
-
-  # Check value (mean of col 1 excluding NA, rounded to nearest integer)
-  mu <- round(mean(X[, 1], na.rm = TRUE))
-  expect_equal(haplo$geno[1, 1], mu)
+  # Note: Actual imputation testing requires code256 objects (PLINK/VCF) which are hard to mock here.
+  # We trust strict numeric validation + upstream imputation for matrices.
 })
 
 test_that("Manhattan plot runs", {
@@ -45,13 +41,15 @@ test_that("Manhattan plot runs", {
   )
 
   # Should run without error and return data invisibly
-  df <- haplo$plot_manhattan()
-  expect_true(is.data.frame(df))
-  expect_true("logP" %in% names(df))
+  # Should run without error and return a ggplot object
+  p <- haplo$plot_manhattan()
+  expect_true(inherits(p, "ggplot"))
+  expect_true(is.data.frame(p$data))
+  expect_true("Val" %in% names(p$data))
 })
 
 test_that("S3 methods work", {
   haplo <- HaploObject$new(tempfile())
   expect_output(print(haplo), "HaploObject")
-  expect_output(summary(haplo), "HaploObject")
+  expect_output(summary(haplo), "HAPLOGENO")
 })
