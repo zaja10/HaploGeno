@@ -1,4 +1,4 @@
-# Script: 13_export_hrm_asreml.R
+# Script: 12_export_hrm_asreml.R
 # Description: Converts Haplotype Matrix into ASReml-ready G-Inverse (.giv).
 #              Calculates IBS, bends the matrix for inversion, and exports sparse format.
 # Dependencies: Matrix, data.table
