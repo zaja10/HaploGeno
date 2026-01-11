@@ -15,19 +15,35 @@ library(bigstatsr)
 #' @param verbose Logical, print progress messages.
 #'
 #' @return A data.frame with columns BlockID, Start, End.
-define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, window_size = 2000, tolerance = 2, verbose = TRUE) {
+define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, window_size = 2000, tolerance = 2, min_physical_dist = 0, verbose = TRUE) {
     if (verbose) message("Starting Haplotype Block Definition (Method: LD)...")
 
     n_markers <- ncol(geno_mat)
-    
-    # 1. Handle Chromosome Boundaries
+
+    # 1. Handle Chromosome Boundaries and Physical Positions
     chr_breaks <- integer(0)
-    if (!is.null(map_data) && "chr" %in% names(map_data)) {
-        chrs <- map_data$chr
-        # Find indices where chr changes (Start of new chromosome)
-        if (length(unique(chrs)) > 1) {
-            chr_breaks <- which(diff(as.numeric(as.factor(chrs))) != 0) + 1
+    positions <- NULL
+
+    if (!is.null(map_data)) {
+        # Check for Chr
+        if ("chr" %in% names(map_data)) {
+            chrs <- map_data$chr
+            if (length(unique(chrs)) > 1) {
+                chr_breaks <- which(diff(as.numeric(as.factor(chrs))) != 0) + 1
+            }
         }
+
+        # Check for Position (support common names)
+        pos_col <- intersect(names(map_data), c("pos", "bp", "position", "start"))
+        if (length(pos_col) > 0) {
+            positions <- map_data[[pos_col[1]]]
+        } else if (min_physical_dist > 0) {
+            warning("min_physical_dist > 0 but no position column found in map_data (expected 'pos', 'bp', 'position'). Physical constraints will be ignored.")
+            min_physical_dist <- 0
+        }
+    } else if (min_physical_dist > 0) {
+        warning("min_physical_dist > 0 but no map_data provided. Physical constraints will be ignored.")
+        min_physical_dist <- 0
     }
 
     starts <- integer()
@@ -79,7 +95,7 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
         # Calculate LD (r^2) against the "Anchor" SNP (first in window)
         r_vals <- cor(mat[, 1], mat, use = "pairwise.complete.obs")
         r2_vals <- as.vector(r_vals^2)
-        
+
         # Handle NAs (e.g. invariant columns) by treating them as 0 correlation
         r2_vals[is.na(r2_vals)] <- 0
 
@@ -87,11 +103,27 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
         failures <- 0
         block_len <- 0 # 0 means only the anchor itself is kept so far
 
+        # Get anchor position if available
+        anchor_pos <- if (!is.null(positions)) positions[current_idx] else NA
+
         # Iterate starting from 2nd marker in window (1st is anchor, r2=1)
         for (j in 2:length(r2_vals)) {
             val <- r2_vals[j]
-            
-            if (val >= r2_threshold) {
+            is_good_ld <- val >= r2_threshold
+
+            # Check Physical Distance Constraint
+            is_physically_close <- FALSE
+            if (min_physical_dist > 0 && !is.na(anchor_pos)) {
+                # Current global index = current_idx + (j-1)
+                curr_global_idx <- current_idx + (j - 1)
+                curr_pos <- positions[curr_global_idx]
+                dist <- abs(curr_pos - anchor_pos)
+                if (!is.na(dist) && dist < min_physical_dist) {
+                    is_physically_close <- TRUE
+                }
+            }
+
+            if (is_good_ld || is_physically_close) {
                 failures <- 0
                 block_len <- j # j is relative index (1-based)
             } else {
@@ -120,8 +152,16 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
 
     if (verbose) close(prog_bar)
 
+    # Extract Chromosome for each block
+    # Since blocks do not cross chromosome boundaries, the Chr of the Start index is sufficient.
+    block_chrs <- NA
+    if (!is.null(map_data) && "chr" %in% names(map_data)) {
+        block_chrs <- map_data$chr[starts]
+    }
+
     blocks_df <- data.frame(
         BlockID = seq_along(starts),
+        Chr = block_chrs,
         Start = starts,
         End = ends
     )
