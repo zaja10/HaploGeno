@@ -1,6 +1,6 @@
 # Script: 01_haplotype_blocking.R
 # Description: Defines haplotype blocks based on Linkage Disequilibrium (LD) decay.
-# Dependencies: bigstatsr, data.table, progressr (optional for progress bar)
+# Dependencies: bigstatsr, data.table
 
 library(data.table)
 library(bigstatsr)
@@ -19,8 +19,7 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
     if (verbose) message("Starting Haplotype Block Definition (Method: LD)...")
 
     n_markers <- ncol(geno_mat)
-    # indices_map <- 1:n_markers # (Unused in this standalone version as we assume clean input)
-
+    
     # 1. Handle Chromosome Boundaries
     chr_breaks <- integer(0)
     if (!is.null(map_data) && "chr" %in% names(map_data)) {
@@ -35,9 +34,6 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
     ends <- integer()
     current_idx <- 1
 
-    # Progress bar setup (if progressr is available/configured)
-    # using simple txtProgressBar if not in a handler, but here we keep it simple or use loop counter
-
     if (verbose) prog_bar <- txtProgressBar(min = 0, max = n_markers, style = 3)
 
     # 2. Scanning Loop
@@ -46,12 +42,13 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
         limit_idx <- min(current_idx + window_size, n_markers)
 
         # Check for chromosome break
+        # We find the *next* break that occurs strictly after current_idx but within the limit
         next_break <- chr_breaks[chr_breaks > current_idx & chr_breaks <= limit_idx]
         if (length(next_break) > 0) {
             limit_idx <- min(next_break) - 1
         }
 
-        # Edge case: limit < current (e.g. at break boundary)
+        # Edge case: If limit < current (e.g., immediate break), close block and move on
         if (limit_idx < current_idx) {
             starts <- c(starts, current_idx)
             ends <- c(ends, current_idx)
@@ -61,11 +58,9 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
         }
 
         # Extract window
-        # Optimized: Extract small chunk to memory for fast correlation
-        # geno_mat can be FBM or standard matrix
         window_indices <- current_idx:limit_idx
 
-        # Check window size
+        # If window is a single marker, it's automatically a block
         if (length(window_indices) < 2) {
             starts <- c(starts, current_idx)
             ends <- c(ends, limit_idx)
@@ -74,32 +69,31 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
             next
         }
 
+        # Extract chunk to memory (Handle FBM vs Matrix)
         if (inherits(geno_mat, "FBM")) {
-            # FBM subsetting: [rows, cols]
-            # We need all rows (samples)
             mat <- geno_mat[, window_indices, drop = FALSE]
         } else {
-            # Standard matrix
             mat <- geno_mat[, window_indices, drop = FALSE]
         }
 
         # Calculate LD (r^2) against the "Anchor" SNP (first in window)
-        # use="pairwise" handles NAs
         r_vals <- cor(mat[, 1], mat, use = "pairwise.complete.obs")
-        r2_vals <- r_vals[1, ]^2 # Square correlation
+        r2_vals <- as.vector(r_vals^2)
+        
+        # Handle NAs (e.g. invariant columns) by treating them as 0 correlation
+        r2_vals[is.na(r2_vals)] <- 0
 
         # Scan for block break
         failures <- 0
-        block_len <- 0
+        block_len <- 0 # 0 means only the anchor itself is kept so far
 
-        # Loop through the window r2 values (starting from 2nd SNP)
+        # Iterate starting from 2nd marker in window (1st is anchor, r2=1)
         for (j in 2:length(r2_vals)) {
             val <- r2_vals[j]
-            if (is.na(val)) val <- 0
-
+            
             if (val >= r2_threshold) {
                 failures <- 0
-                block_len <- j # j is relative index in window (1-based)
+                block_len <- j # j is relative index (1-based)
             } else {
                 failures <- failures + 1
             }
@@ -107,13 +101,12 @@ define_blocks_ld <- function(geno_mat, map_data = NULL, r2_threshold = 0.5, wind
             if (failures > tolerance) break
         }
 
-        # Determine final end index
-        # If block_len remains 0, it means immediate failure, block is just the anchor itself
+        # If block_len is still 0 (immediate failure), the block is just the anchor (length 1)
         if (block_len == 0) block_len <- 1
 
         final_end <- current_idx + block_len - 1
 
-        # Sanity check to not go backwards or stay stuck
+        # Safety check
         if (final_end < current_idx) final_end <- current_idx
 
         # Append results
